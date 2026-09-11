@@ -1,0 +1,140 @@
+# Scheduled minimal invocation against the configured agent subscription.
+#
+# Scheduling is best-effort: GitHub queues cron workflows and commonly runs
+# them several minutes late, occasionally much later under load. Nothing in
+# this workflow or the application assumes on-the-second delivery - see
+# README.md ("Scheduling").
+name: Usage window trigger
+
+on:
+  schedule:
+    # 05:17 UTC daily. Minute 17 rather than 00 because the top of the hour is
+    # GitHub's busiest slot and is delayed most. Cron is ALWAYS UTC - GitHub
+    # has no timezone setting. See README.md ("Scheduling") to convert.
+    - cron: "17 5 * * *"
+
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Provider to invoke"
+        type: choice
+        options: [claude]
+        default: claude
+      dry_run:
+        description: "Validate configuration without calling the provider (consumes no allowance)"
+        type: boolean
+        default: false
+      model:
+        description: "Model override (blank = repository default)"
+        type: string
+        default: ""
+      log_level:
+        description: "Log level"
+        type: choice
+        options: [debug, info, warn, error]
+        default: info
+
+# Least privilege: the job reads the repository and writes nothing back.
+permissions:
+  contents: read
+
+# Overlap protection. One in-flight run per provider; a newcomer queues rather
+# than cancelling, because cancelling mid-invocation could leave allowance spent.
+concurrency:
+  group: usage-window-trigger-${{ github.event.inputs.provider || 'claude' }}
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Reviewed exact version. Upgrade this value through a reviewed change
+      # after validating the adapter against the new CLI output contract.
+      CLAUDE_CLI_VERSION: 2.1.268
+
+    steps:
+      - name: Check out the orchestrator
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
+      - name: Install the Claude Code CLI
+        if: ${{ (github.event.inputs.provider || 'claude') == 'claude' && github.event.inputs.dry_run != 'true' }}
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}"
+
+      - name: Trigger usage window
+        id: trigger
+        env:
+          # The only credential in this job. Never echoed, never forwarded to
+          # anything but the provider adapter's child process.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Inputs are passed through the environment rather than interpolated
+          # into the shell, so no input value can be parsed as a command.
+          AGENT_PROVIDER: ${{ github.event.inputs.provider || 'claude' }}
+          AGENT_MODEL: ${{ github.event.inputs.model || vars.AGENT_MODEL }}
+          AGENT_PROMPT: ${{ vars.AGENT_PROMPT }}
+          AGENT_TIMEOUT_SECONDS: ${{ vars.AGENT_TIMEOUT_SECONDS }}
+          AGENT_MAX_ATTEMPTS: ${{ vars.AGENT_MAX_ATTEMPTS }}
+          AGENT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          AGENT_LOG_LEVEL: ${{ github.event.inputs.log_level || 'info' }}
+          AGENT_TRIGGER_SOURCE: ${{ github.event_name == 'schedule' && 'scheduled' || 'manual' }}
+        run: |
+          set -o pipefail
+          set +e
+          node src/main.ts
+          echo "process_exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      # Translates the application's semantic exit code into a job conclusion.
+      # A usage limit is an expected operational outcome, so it annotates the
+      # run as a warning and lets the job pass; everything else that is not a
+      # success or a deliberate skip fails the job. See README.md ("Exit codes").
+      - name: Classify outcome
+        if: always()
+        env:
+          CODE: ${{ steps.trigger.outputs.process_exit_code }}
+        run: |
+          printf 'exit=%s\n' "${CODE:-none}"
+          case "${CODE:-1}" in
+            0)
+              echo "::notice title=Usage window trigger::Completed or deliberately skipped"
+              ;;
+            10)
+              echo "::warning title=Usage limit reached::The subscription limit is currently reached; no allowance was consumed. This is expected, not a defect."
+              ;;
+            20)
+              echo "::error title=Configuration or credentials::Check the structured application log and README troubleshooting section"
+              exit 1
+              ;;
+            21)
+              echo "::error title=Authentication failed::Rotate CLAUDE_CODE_OAUTH_TOKEN"
+              exit 1
+              ;;
+            22)
+              echo "::error title=Provider unavailable::The Claude CLI could not be executed"
+              exit 1
+              ;;
+            30)
+              echo "::error title=Invocation timed out::The provider did not answer within the configured timeout"
+              exit 1
+              ;;
+            31)
+              echo "::error title=Transient failure::Retries were exhausted"
+              exit 1
+              ;;
+            40)
+              echo "::error title=Unknown or ambiguous outcome::Inspect the structured application log"
+              exit 1
+              ;;
+            *)
+              echo "::error title=Invocation failed::Unknown or ambiguous failure; inspect the application log"
+              exit 1
+              ;;
+          esac
