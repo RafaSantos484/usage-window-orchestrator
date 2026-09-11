@@ -1,0 +1,23 @@
+{
+  "name": "usage-window-orchestrator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scheduled, provider-neutral orchestrator that issues a minimal authenticated invocation against an AI coding agent subscription.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "trigger": "node src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run test"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
