@@ -1,0 +1,9 @@
+node_modules/
+*.log
+
+# Never commit local agent credentials or session state.
+.claude/
+.credentials.json
+.env
+.env.*
+!.env.example
