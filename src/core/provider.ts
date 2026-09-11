@@ -1,7 +1,7 @@
 import type { InvocationRequest, ProviderOutcome } from "./invocation.ts";
 
 /**
- * The port the orchestrator depends on. Everything Claude-specific - command
+ * The port the orchestrator depends on. Everything provider-specific - command
  * construction, output parsing, error strings - lives behind this boundary.
  *
  * Behavioural contract every adapter must honour (Liskov):
@@ -13,7 +13,9 @@ import type { InvocationRequest, ProviderOutcome } from "./invocation.ts";
  *     returning a TIMEOUT outcome. It must not leave child processes running.
  *  3. Outcomes must never carry credentials, prompts, or full response bodies -
  *     `diagnostic.summary` is redacted and truncated by the adapter.
- *  4. `invoke` must be free of side effects beyond the provider call itself.
+ *  4. `invoke` must not mutate the checked-out project, persistent user state,
+ *     credentials, or cross-run state. Invocation-scoped temporary runtime
+ *     state is permitted when isolated and cleaned up on a best-effort basis.
  */
 export interface AgentProvider {
   readonly id: string;
