@@ -71,7 +71,7 @@ Full vocabulary and rationale: [ADR 0001](docs/adr/0001-architecture.md#2-termin
 
 5. **Adjust the schedule** in
    [`.github/workflows/usage-window-trigger.yml`](.github/workflows/usage-window-trigger.yml)
-   (it is `17 5 * * *` UTC by default — see [Scheduling](#scheduling)).
+   (it is `17 */2 * * *` UTC by default — see [Scheduling](#scheduling)).
 
 ---
 
@@ -116,7 +116,7 @@ Command-line equivalents for local use: `--dry-run`, `--provider <id>`,
 ```yaml
 on:
   schedule:
-    - cron: "17 5 * * *"    # 05:17 UTC, daily
+    - cron: "17 */2 * * *"  # minute 17 UTC, every 2 hours
 ```
 
 **GitHub cron is always UTC.** There is no timezone setting, and it does not

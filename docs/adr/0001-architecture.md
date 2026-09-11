@@ -51,7 +51,8 @@ hierarchy.
 
 ### Scheduling and overlap
 
-The workflow has one daily UTC cron entry and supports `workflow_dispatch`.
+The workflow has one UTC cron entry every 2 hours and supports
+`workflow_dispatch`.
 GitHub Actions `concurrency` uses `cancel-in-progress: false`, so a second run
 waits instead of running simultaneously or cancelling an invocation that may
 already have consumed allowance.
@@ -87,7 +88,8 @@ the workflow.
 Rejected for this release. Cross-run duplicate suppression needs mutable,
 authoritative state. GitHub Actions cache provides immutable snapshots and does
 not make that guarantee. Adding a state service would be disproportionate to a
-single-user daily job, so the product guarantee is limited to overlap control.
+single-user scheduled job, so the product guarantee is limited to overlap
+control.
 
 ### Add a second provider framework now
 
@@ -98,7 +100,7 @@ should be added only when a real second provider demonstrates a need.
 ### Use a serverless function or container scheduler
 
 Rejected. It would add deployment, secret-management, and infrastructure costs
-for a short daily CLI invocation that GitHub Actions already hosts.
+for a short scheduled CLI invocation that GitHub Actions already hosts.
 
 ## Security consequences
 

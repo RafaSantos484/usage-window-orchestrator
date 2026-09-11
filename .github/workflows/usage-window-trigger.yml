@@ -8,10 +8,10 @@ name: Usage window trigger
 
 on:
   schedule:
-    # 05:17 UTC daily. Minute 17 rather than 00 because the top of the hour is
-    # GitHub's busiest slot and is delayed most. Cron is ALWAYS UTC - GitHub
-    # has no timezone setting. See README.md ("Scheduling") to convert.
-    - cron: "17 5 * * *"
+    # Every 2 hours at minute 17. Minute 17 rather than 00 because the top of
+    # the hour is GitHub's busiest slot and is delayed most. Cron is ALWAYS UTC
+    # - GitHub has no timezone setting. See README.md ("Scheduling") to convert.
+    - cron: "17 */2 * * *"
 
   workflow_dispatch:
     inputs:
