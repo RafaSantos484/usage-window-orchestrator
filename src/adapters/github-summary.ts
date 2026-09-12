@@ -9,8 +9,8 @@ import { redact, redactValue } from "../core/logging.ts";
 const HEADLINE: Readonly<Record<InvocationStatus, string>> = Object.freeze({
   [InvocationStatus.SUCCESS]: "✅ Invocation succeeded — subscription allowance was used.",
   [InvocationStatus.USAGE_LIMIT_REACHED]:
-    "⚠️ Usage limit already reached — no allowance consumed. This is an expected operational outcome, not a defect.",
-  [InvocationStatus.AUTH_FAILURE]: "❌ Authentication failed — the subscription token needs attention.",
+    "⚠️ Provider reported that the usage limit is reached — no completed response was observed. This is an expected operational outcome, not a defect.",
+  [InvocationStatus.AUTH_FAILURE]: "❌ Authentication failed — the provider credential needs attention.",
   [InvocationStatus.TIMEOUT]: "❌ Timed out — the provider did not answer within the configured budget.",
   [InvocationStatus.PROVIDER_UNAVAILABLE]: "❌ Provider CLI unavailable — it could not be executed.",
   [InvocationStatus.TRANSIENT_FAILURE]: "❌ Transient failure — retries were exhausted.",
