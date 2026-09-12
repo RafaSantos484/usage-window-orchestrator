@@ -4,7 +4,16 @@ import { InvocationStatus } from "../src/core/invocation.ts";
 import type { ProcessRunResult } from "../src/adapters/process-runner.ts";
 
 function run(overrides: Partial<ProcessRunResult> = {}): ProcessRunResult {
-  return { stdout: "", stderr: "", exitCode: 0, termSignal: null, timedOut: false, ...overrides };
+  return {
+    stdout: "",
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    exitCode: 0,
+    termSignal: null,
+    timedOut: false,
+    ...overrides,
+  };
 }
 
 /** Representative shape of `claude -p --output-format json` on success. */
@@ -140,6 +149,16 @@ describe("classifyClaudeRun", () => {
     });
     expect(outcome.status).toBe(InvocationStatus.PROVIDER_UNAVAILABLE);
     expect(outcome.diagnostic.code).toBe("cli_not_executable");
+  });
+
+  it.each(["stdoutTruncated", "stderrTruncated"] as const)("fails closed when %s", (field) => {
+    const outcome = classifyClaudeRun({
+      run: run({ stdout: SUCCESS_STDOUT, [field]: true }),
+      secrets: [],
+    });
+
+    expect(outcome.status).toBe(InvocationStatus.UNKNOWN_FAILURE);
+    expect(outcome.diagnostic.code).toBe("output_truncated");
   });
 
   it("treats exit code 127 as a missing binary", () => {

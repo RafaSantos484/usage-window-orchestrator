@@ -17,6 +17,10 @@ export interface ProcessSpec {
 export interface ProcessRunResult {
   readonly stdout: string;
   readonly stderr: string;
+  /** The stdout capture reached its byte bound and later bytes were dropped. */
+  readonly stdoutTruncated: boolean;
+  /** The stderr capture reached its byte bound and later bytes were dropped. */
+  readonly stderrTruncated: boolean;
   readonly exitCode: number | null;
   readonly termSignal: NodeJS.Signals | null;
   /** The process was killed because the abort signal fired. */
@@ -39,6 +43,7 @@ export type ProcessRunner = (spec: ProcessSpec) => Promise<ProcessRunResult>;
  * Notable properties:
  *  - never uses a shell, so prompt text cannot be interpreted as shell syntax;
  *  - passes an explicit, closed environment (least privilege);
+ *  - reports when bounded stdout or stderr capture dropped later bytes;
  *  - always resolves, mapping spawn failures onto the result shape;
  *  - escalates SIGTERM to SIGKILL so an abort cannot leave a process behind;
  *  - kills the whole process group, and settles on `exit` rather than `close`
@@ -51,6 +56,8 @@ export const spawnProcessRunner: ProcessRunner = (spec) =>
   new Promise<ProcessRunResult>((resolve) => {
     let stdout = "";
     let stderr = "";
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let timedOut = false;
     let settled = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
@@ -98,16 +105,22 @@ export const spawnProcessRunner: ProcessRunner = (spec) =>
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
-      stdout = appendCapture(stdout, chunk);
+      const capture = appendCapture(stdout, chunk);
+      stdout = capture.value;
+      stdoutTruncated ||= capture.truncated;
     });
     child.stderr?.on("data", (chunk: string) => {
-      stderr = appendCapture(stderr, chunk);
+      const capture = appendCapture(stderr, chunk);
+      stderr = capture.value;
+      stderrTruncated ||= capture.truncated;
     });
 
     child.on("error", (error: NodeJS.ErrnoException) => {
       finish({
         stdout,
         stderr,
+        stdoutTruncated,
+        stderrTruncated,
         exitCode: null,
         termSignal: null,
         timedOut,
@@ -123,6 +136,8 @@ export const spawnProcessRunner: ProcessRunner = (spec) =>
       finish({
         stdout,
         stderr,
+        stdoutTruncated,
+        stderrTruncated,
         exitCode: code,
         termSignal,
         timedOut,
@@ -133,6 +148,8 @@ export const spawnProcessRunner: ProcessRunner = (spec) =>
       finish({
         stdout,
         stderr,
+        stdoutTruncated,
+        stderrTruncated,
         exitCode: code,
         termSignal,
         timedOut,
@@ -140,15 +157,15 @@ export const spawnProcessRunner: ProcessRunner = (spec) =>
     });
   });
 
-function appendCapture(current: string, chunk: string): string {
+function appendCapture(current: string, chunk: string): { readonly value: string; readonly truncated: boolean } {
   const remaining = MAX_CAPTURE_BYTES - Buffer.byteLength(current, "utf8");
-  if (remaining <= 0) return current;
+  if (remaining <= 0) return { value: current, truncated: chunk.length > 0 };
   const bytes = Buffer.from(chunk, "utf8");
-  if (bytes.byteLength <= remaining) return current + chunk;
+  if (bytes.byteLength <= remaining) return { value: current + chunk, truncated: false };
 
   // Keep the captured prefix valid UTF-8 when a multibyte character crosses
   // the byte boundary. Node's decoder otherwise replaces the partial suffix.
   let end = remaining;
   while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end -= 1;
-  return current + bytes.subarray(0, end).toString("utf8");
+  return { value: current + bytes.subarray(0, end).toString("utf8"), truncated: true };
 }
