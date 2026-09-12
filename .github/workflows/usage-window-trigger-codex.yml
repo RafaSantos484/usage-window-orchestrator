@@ -1,24 +1,33 @@
-# Scheduled minimal invocation against the CLAUDE subscription.
+# Scheduled minimal invocation against the CODEX (ChatGPT workspace) plan.
 #
 # One workflow per provider. A cron event carries no `workflow_dispatch`
 # inputs, so a shared workflow could not choose a provider deterministically on
-# a schedule; giving each provider its own file makes the scheduled provider a
-# property of the file itself. It also keeps each provider's secret out of the
-# other's job entirely. Codex lives in usage-window-trigger-codex.yml.
+# a schedule; this file *is* the Codex schedule. It also keeps
+# CLAUDE_CODE_OAUTH_TOKEN out of this job entirely, so the Codex CLI runs in a
+# process that has never seen the Claude credential.
 # Rationale: docs/adr/0002-codex-provider.md.
+#
+# AUTHENTICATION: CODEX_ACCESS_TOKEN is a Codex access token minted in the
+# ChatGPT admin console. It bills against the ChatGPT workspace plan allowance,
+# NOT the OpenAI Platform API. It requires a ChatGPT Business or Enterprise
+# workspace, and it expires after at most 90 days - see
+# README.md ("Authentication and billing") for setup and rotation.
 #
 # Scheduling is best-effort: GitHub queues cron workflows and commonly runs
 # them several minutes late, occasionally much later under load. Nothing in
 # this workflow or the application assumes on-the-second delivery - see
 # README.md ("Scheduling").
-name: Usage window trigger (Claude)
+name: Usage window trigger (Codex)
 
 on:
   schedule:
-    # Every 2 hours at minute 17. Minute 17 rather than 00 because the top of
-    # the hour is GitHub's busiest slot and is delayed most. Cron is ALWAYS UTC
-    # - GitHub has no timezone setting. See README.md ("Scheduling") to convert.
-    - cron: "17 */2 * * *"
+    # Every 2 hours at minute 47. Offset 30 minutes from the Claude schedule so
+    # the two providers normally start at different times, reducing hosted
+    # runner contention, and off the top of the hour because that is GitHub's
+    # busiest and most-delayed slot. Delivery can still be delayed or overlap.
+    # Cron is ALWAYS UTC - GitHub has no timezone setting. See README.md
+    # ("Scheduling") to convert.
+    - cron: "47 */2 * * *"
 
   workflow_dispatch:
     inputs:
@@ -40,12 +49,10 @@ on:
 permissions:
   contents: read
 
-# Overlap protection. One in-flight Claude run; a newcomer queues rather than
+# Overlap protection. One in-flight Codex run; a newcomer queues rather than
 # cancelling, because cancelling mid-invocation could leave allowance spent.
-# Codex uses a separate group: overlap protection is scoped per provider by
-# default, and cross-provider exclusion can be configured if required.
 concurrency:
-  group: usage-window-trigger-claude
+  group: usage-window-trigger-codex
   cancel-in-progress: false
 
 jobs:
@@ -53,7 +60,7 @@ jobs:
     # The provider Environment's deployment-branch policy is the secret
     # boundary. This in-file guard and the checkout below are defense in depth.
     if: ${{ github.ref_name == github.event.repository.default_branch }}
-    environment: usage-window-claude
+    environment: usage-window-codex
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -69,23 +76,29 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Install the Claude Code CLI
+      # Installed separately from this application's lockfile: the official CLI
+      # is a provider runtime, not an application library. The install runs
+      # BEFORE the credential is introduced, so no install-time lifecycle
+      # script can observe it.
+      - name: Install the Codex CLI
         if: ${{ github.event.inputs.dry_run != 'true' }}
         # Reviewed exact package/version. Upgrade this literal through a
         # reviewed change after validating the adapter against the new CLI
-        # output contract.
-        run: npm install -g --no-audit --no-fund "@anthropic-ai/claude-code@2.1.268"
+        # event contract and flag set.
+        run: npm install -g --no-audit --no-fund "@openai/codex@0.154.0"
 
       - name: Trigger usage window
         id: trigger
         env:
           # The only credential in this job. Never echoed, never forwarded to
-          # anything but the provider adapter's child process.
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # anything but the provider adapter's child process. Deliberately
+          # scoped to this step rather than the job, and deliberately NOT an
+          # API key: see README.md ("Authentication and billing").
+          CODEX_ACCESS_TOKEN: ${{ secrets.CODEX_ACCESS_TOKEN }}
           # Inputs are passed through the environment rather than interpolated
           # into the shell, so no input value can be parsed as a command.
-          AGENT_PROVIDER: claude
-          AGENT_MODEL: ${{ github.event.inputs.model || vars.AGENT_MODEL }}
+          AGENT_PROVIDER: codex
+          AGENT_MODEL: ${{ github.event.inputs.model || vars.AGENT_CODEX_MODEL }}
           AGENT_PROMPT: ${{ vars.AGENT_PROMPT }}
           AGENT_TIMEOUT_SECONDS: ${{ vars.AGENT_TIMEOUT_SECONDS }}
           AGENT_MAX_ATTEMPTS: ${{ vars.AGENT_MAX_ATTEMPTS }}
@@ -104,5 +117,5 @@ jobs:
         uses: ./.github/actions/classify-outcome
         with:
           exit-code: ${{ steps.trigger.outputs.process_exit_code }}
-          provider-label: Claude
-          credential-name: CLAUDE_CODE_OAUTH_TOKEN
+          provider-label: Codex
+          credential-name: CODEX_ACCESS_TOKEN
