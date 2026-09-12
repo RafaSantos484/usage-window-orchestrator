@@ -27,6 +27,8 @@ function fakeRunner(result: Partial<ProcessRunResult> = {}) {
     return {
       stdout: JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "ok" }),
       stderr: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
       exitCode: 0,
       termSignal: null,
       timedOut: false,
@@ -135,9 +137,19 @@ describe("ClaudeCodeProvider.invoke", () => {
     expect(calls[0]!.cwd).toMatch(/usage-window-claude-/);
   });
 
-  it("never invokes a shell and runs outside the repository", async () => {
+  it("never invokes a shell and uses the isolated working directory", async () => {
     const { runner, calls } = fakeRunner();
-    const provider = new ClaudeCodeProvider({ env, runner, cwd: "/tmp/neutral" });
+    const provider = new ClaudeCodeProvider({
+      env,
+      runner,
+      isolationFactory: async () => ({
+        root: "/tmp/test-isolation",
+        home: "/tmp/test-isolation/home",
+        tmp: "/tmp/test-isolation/tmp",
+        cwd: "/tmp/neutral",
+      }),
+      cleanupIsolation: async () => {},
+    });
     await provider.invoke(REQUEST, AbortSignal.timeout(60_000));
 
     expect(calls[0]!.command).toBe("claude");

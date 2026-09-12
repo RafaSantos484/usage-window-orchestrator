@@ -5,14 +5,18 @@ import { InvocationStatus, type InvocationRequest, type ProviderOutcome } from "
 import { safeSummary } from "../../core/logging.ts";
 import type { AgentProvider } from "../../core/provider.ts";
 import { spawnProcessRunner, type ProcessRunner } from "../../adapters/process-runner.ts";
+import { ProviderConfigurationError } from "../provider-configuration-error.ts";
 import { classifyClaudeRun } from "./classify.ts";
+
+// Re-exported so existing importers of this module keep working.
+export { ProviderConfigurationError } from "../provider-configuration-error.ts";
 
 export const CLAUDE_PROVIDER_ID = "claude";
 
 /** The subscription credential. This is the only supported credential path. */
 export const OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
 /** Present only so we can refuse to use it - see the class comment. */
-const API_KEY_ENV = "ANTHROPIC_API_KEY";
+export const ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
 
 /** Prefix of a usage-billed API key, as opposed to a subscription OAuth token. */
 const API_KEY_PREFIX = "sk-ant-api";
@@ -28,20 +32,11 @@ const ENV_ALLOWLIST: readonly string[] = Object.freeze([
   "TZ",
 ]);
 
-export class ProviderConfigurationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ProviderConfigurationError";
-  }
-}
-
 export interface ClaudeProviderOptions {
   /** Reads configuration and secrets without consulting global process state. */
   readonly env: (name: string) => string | undefined;
   /** Injected for tests; defaults to a real child process. */
   readonly runner?: ProcessRunner;
-  /** Working directory for the CLI. Defaults to a temp dir (see below). */
-  readonly cwd?: string;
   /** Infrastructure seam for deterministic setup/cleanup tests. */
   readonly isolationFactory?: () => Promise<IsolationDirectories>;
   readonly cleanupIsolation?: (root: string) => Promise<void>;
@@ -53,17 +48,21 @@ export interface ClaudeProviderOptions {
  *
  * Design notes:
  *
- *  - **Subscription only.** Authentication uses `CLAUDE_CODE_OAUTH_TOKEN`. We
- *    never read, forward, or fall back to `ANTHROPIC_API_KEY`, because that
- *    would silently move execution from the user's subscription allowance onto
- *    usage-based billing. If the token looks like an API key we refuse to start.
+ *  - **Subscription only.** Authentication uses `CLAUDE_CODE_OAUTH_TOKEN`. The
+ *    adapter never uses `ANTHROPIC_API_KEY` for authentication or forwards it to
+ *    the child process. The composition root may read its value only to arm
+ *    redaction and inspect presence for a warning; it is never a fallback,
+ *    because using it would silently move execution from the user's
+ *    subscription allowance onto usage-based billing. If the token looks like
+ *    an API key we refuse to start.
  *  - **Structured output.** We ask for JSON and parse the envelope; free-text
  *    matching is a fallback confined to `classify.ts`.
  *  - **Closed environment.** The child receives an allowlisted environment plus
  *    the token, so no unrelated CI secret is exposed to it.
  *  - **Isolated runtime directories.** Each invocation gets a temporary home,
- *    temp directory and (unless overridden for tests/embedding) working
- *    directory. This prevents repository- and user-level Claude settings from
+ *    temp directory and working directory from its isolation factory. Production
+ *    uses the default temporary-runtime factory; tests may inject a deterministic
+ *    factory. This prevents repository- and user-level Claude settings from
  *    changing a minimal invocation.
  */
 export class ClaudeCodeProvider implements AgentProvider {
@@ -72,7 +71,6 @@ export class ClaudeCodeProvider implements AgentProvider {
   readonly #binary: string;
   readonly #token: string;
   readonly #runner: ProcessRunner;
-  readonly #cwd: string | undefined;
   readonly #env: (name: string) => string | undefined;
   readonly #isolationFactory: () => Promise<IsolationDirectories>;
   readonly #cleanupIsolation: (root: string) => Promise<void>;
@@ -100,7 +98,6 @@ export class ClaudeCodeProvider implements AgentProvider {
     this.#token = token;
     this.#binary = env("AGENT_CLAUDE_BIN")?.trim() || "claude";
     this.#runner = options.runner ?? spawnProcessRunner;
-    this.#cwd = options.cwd;
     this.#isolationFactory = options.isolationFactory ?? createIsolationDirectory;
     this.#cleanupIsolation = options.cleanupIsolation ?? ((root) => rm(root, { recursive: true, force: true }));
   }
@@ -133,13 +130,14 @@ export class ClaudeCodeProvider implements AgentProvider {
         args: buildArgs(request),
         env: { ...this.#childEnv(isolation), [OAUTH_TOKEN_ENV]: this.#token },
         signal,
-        cwd: this.#cwd ?? isolation.cwd,
+        cwd: isolation.cwd,
       });
 
       return classifyClaudeRun({ run, secrets: this.#secrets });
     } finally {
-      // Cleanup is hygiene only. It must never replace Claude's normalized
-      // outcome with an infrastructure error.
+      // Cleanup is best effort. It must never replace Claude's normalized
+      // outcome with an infrastructure error; persistent runners should
+      // monitor temporary-directory cleanup separately.
       await this.#cleanupIsolation(isolation.root).catch(() => {});
     }
   }
@@ -155,7 +153,7 @@ export class ClaudeCodeProvider implements AgentProvider {
     child.TEMP = isolation.tmp;
     child.TMP = isolation.tmp;
     // Explicitly cleared, not merely omitted, to document the intent.
-    delete child[API_KEY_ENV];
+    delete child[ANTHROPIC_API_KEY_ENV];
     return child;
   }
 }
@@ -195,7 +193,7 @@ export function buildArgs(request: InvocationRequest): string[] {
 
 /** Warns if a usage-billed key is present in the environment. Returns true when it is. */
 export function apiKeyPresentInEnvironment(env: (name: string) => string | undefined): boolean {
-  return Boolean(env(API_KEY_ENV)?.trim());
+  return Boolean(env(ANTHROPIC_API_KEY_ENV)?.trim());
 }
 
 export const createClaudeProvider = (options: ClaudeProviderOptions): AgentProvider =>
