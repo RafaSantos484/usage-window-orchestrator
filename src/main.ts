@@ -13,13 +13,13 @@ import { UsageWindowOrchestrator } from "./core/orchestrator.ts";
 import type { AgentProvider } from "./core/provider.ts";
 import { redact, redactValue } from "./core/logging.ts";
 import { ConfigError, applyCliOverrides, loadConfig, type Env } from "./config.ts";
+import { ProviderConfigurationError } from "./providers/provider-configuration-error.ts";
 import {
-  CLAUDE_PROVIDER_ID,
-  OAUTH_TOKEN_ENV,
-  ProviderConfigurationError,
-  apiKeyPresentInEnvironment,
-  createClaudeProvider,
-} from "./providers/claude/claude-code-provider.ts";
+  PROVIDER_IDS,
+  SECRET_ENV_NAMES,
+  describeProvider,
+  dryRunProvider,
+} from "./providers/catalog.ts";
 import { JsonLogger } from "./adapters/json-logger.ts";
 import { publishToGitHub } from "./adapters/github-summary.ts";
 import { logUnhandledError } from "./adapters/unhandled-error.ts";
@@ -33,7 +33,7 @@ see README.md.
 
   --dry-run            Validate configuration and orchestration without calling
                        the provider (consumes no allowance).
-  --provider <id>      Override AGENT_PROVIDER.
+  --provider <id>      Override AGENT_PROVIDER (claude | codex).
   --help               Show this message.
 `;
 
@@ -44,13 +44,14 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   // Secrets are collected before anything can log, so redaction is always armed.
-  const secrets = [process.env[OAUTH_TOKEN_ENV], process.env.ANTHROPIC_API_KEY];
+  // Every provider's credentials are scrubbed, not just the selected one's.
+  const secrets = SECRET_ENV_NAMES.map((name) => process.env[name]);
   let env: Env;
 
   let config;
   try {
     env = applyCliOverrides(argv, process.env);
-    config = loadConfig(env, [CLAUDE_PROVIDER_ID]);
+    config = loadConfig(env, PROVIDER_IDS);
   } catch (error) {
     if (error instanceof ConfigError) {
       new JsonLogger({ level: "error", secrets }).error("config.invalid", { problems: error.problems });
@@ -60,36 +61,31 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   const logger = new JsonLogger({ level: config.logLevel, secrets });
+  const readEnv = (name: string) => env[name];
+  const descriptor = describeProvider(config.providerId);
 
-  if (apiKeyPresentInEnvironment((name) => env[name])) {
+  if (!config.dryRun && descriptor?.billingCredentialPresent(readEnv)) {
     // Not fatal - we simply never forward it - but the operator should know
     // that a usage-billed credential is sitting in this environment.
-    logger.warn("config.api_key_ignored", {
-      detail:
-        "ANTHROPIC_API_KEY is present but is deliberately not forwarded to the provider. " +
-        "This project bills against the subscription only.",
-    });
+    logger.warn("config.api_key_ignored", { detail: descriptor.billingWarning });
   }
 
   let provider: AgentProvider;
   if (config.dryRun) {
-    provider = {
-      id: config.providerId,
-      invoke: async () => {
-        throw new Error("dry-run provider must not be invoked");
-      },
-    };
+    // No adapter is constructed: a dry run must not validate, forward, install
+    // or contact a provider. Global secret collection above is only for output
+    // redaction; no selected credential is inspected in this branch.
+    provider = dryRunProvider(config.providerId);
     logger.info("dry_run.validation", {
       providerId: config.providerId,
-      secretPresent: Boolean(env[OAUTH_TOKEN_ENV]?.trim()),
     });
   } else {
-    if (config.providerId !== CLAUDE_PROVIDER_ID) {
+    if (!descriptor) {
       logger.error("config.invalid", { detail: `Unsupported provider: ${config.providerId}.` });
       return ExitCode.CONFIG_ERROR;
     }
     try {
-      provider = createClaudeProvider({ env: (name) => env[name] });
+      provider = descriptor.create(readEnv);
     } catch (error) {
       if (error instanceof ProviderConfigurationError) {
         logger.error("provider.misconfigured", { providerId: config.providerId, detail: error.message });
@@ -141,6 +137,6 @@ main(process.argv.slice(2))
   })
   .catch((error: unknown) => {
     // Last-resort handler: an unexpected defect, not a classified outcome.
-    logUnhandledError(error, [process.env[OAUTH_TOKEN_ENV], process.env.ANTHROPIC_API_KEY]);
+    logUnhandledError(error, SECRET_ENV_NAMES.map((name) => process.env[name]));
     process.exitCode = ExitCode.UNKNOWN_FAILURE;
   });
