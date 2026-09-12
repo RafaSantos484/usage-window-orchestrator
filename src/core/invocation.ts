@@ -27,7 +27,7 @@ export const InvocationStatus = {
   TIMEOUT: "timeout",
   /** The provider's entry point could not be executed at all (not installed / not on PATH). */
   PROVIDER_UNAVAILABLE: "provider_unavailable",
-  /** A clearly transient infrastructure failure (network, 5xx, overloaded). */
+  /** A clearly transient pre-acceptance failure proving the invocation was not accepted. */
   TRANSIENT_FAILURE: "transient_failure",
   /** Anything the adapter could not confidently classify. */
   UNKNOWN_FAILURE: "unknown_failure",
@@ -139,8 +139,10 @@ export interface InvocationRequest {
 /**
  * Safe, human-readable diagnostic.
  *
- * `code` is a stable machine token; `summary` is a redacted, truncated excerpt
- * suitable for logs and job summaries. Neither ever carries credentials.
+ * `code` is a stable machine token; `summary` is a bounded, secret-safe
+ * explanation suitable for logs and job summaries. Providers may use fixed
+ * summaries rather than quoting provider output. Neither ever carries
+ * credentials.
  */
 export interface Diagnostic {
   readonly code: string;

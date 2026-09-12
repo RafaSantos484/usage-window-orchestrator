@@ -1,0 +1,73 @@
+# Translates the application's semantic exit code into a job conclusion and a
+# run annotation. Shared by the per-provider trigger workflows so the exit-code
+# contract in src/core/invocation.ts has exactly one mapping in CI.
+#
+# A usage limit is an expected operational outcome, so it annotates the run as a
+# warning and lets the job pass; everything else that is not a success or a
+# deliberate skip fails the job. See README.md ("Exit codes and outcomes").
+#
+# This action takes no secrets and runs no provider code. If you want a usage
+# limit to fail instead of warn, change the `10)` arm below - once, here.
+name: Classify invocation outcome
+description: Maps a usage-window-orchestrator exit code onto a job conclusion and annotation.
+
+inputs:
+  exit-code:
+    description: "Exit code reported by src/main.ts. Empty or unset is treated as a failure."
+    required: true
+  provider-label:
+    description: "Human-readable provider name used in annotations, e.g. Claude."
+    required: true
+  credential-name:
+    description: "Name of the repository secret to rotate on an authentication failure."
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Classify outcome
+      shell: bash
+      # Inputs reach the script through the environment rather than being
+      # interpolated into it, so no input value can be parsed as a command.
+      env:
+        CODE: ${{ inputs.exit-code }}
+        PROVIDER: ${{ inputs.provider-label }}
+        CREDENTIAL: ${{ inputs.credential-name }}
+      run: |
+        printf 'provider=%s exit=%s\n' "$PROVIDER" "${CODE:-none}"
+        case "${CODE:-1}" in
+          0)
+            echo "::notice title=Usage window trigger::${PROVIDER}: completed or deliberately skipped"
+            ;;
+          10)
+            echo "::warning title=Usage limit reached::${PROVIDER}: the provider reported that the subscription usage limit is currently reached; no completed response was observed. This is expected, not a defect."
+            ;;
+          20)
+            echo "::error title=Configuration or credentials::${PROVIDER}: check the structured application log and README troubleshooting section"
+            exit 1
+            ;;
+          21)
+            echo "::error title=Authentication failed::${PROVIDER}: rotate ${CREDENTIAL}"
+            exit 1
+            ;;
+          22)
+            echo "::error title=Provider unavailable::${PROVIDER}: the CLI could not be executed"
+            exit 1
+            ;;
+          30)
+            echo "::error title=Invocation timed out::${PROVIDER}: no answer within the configured timeout"
+            exit 1
+            ;;
+          31)
+            echo "::error title=Transient failure::${PROVIDER}: retries were exhausted"
+            exit 1
+            ;;
+          40)
+            echo "::error title=Unknown or ambiguous outcome::${PROVIDER}: inspect the structured application log"
+            exit 1
+            ;;
+          *)
+            echo "::error title=Invocation failed::${PROVIDER}: unknown or ambiguous failure; inspect the application log"
+            exit 1
+            ;;
+        esac

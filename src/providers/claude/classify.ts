@@ -229,6 +229,16 @@ export function classifyClaudeRun(input: ClassifyInput): ProviderOutcome {
     };
   }
 
+  if (run.stdoutTruncated || run.stderrTruncated) {
+    return {
+      status: InvocationStatus.UNKNOWN_FAILURE,
+      diagnostic: {
+        code: "output_truncated",
+        summary: "Claude output exceeded the capture limit; the complete invocation outcome could not be verified and was not retried.",
+      },
+    };
+  }
+
   const isSuccessfulResponse =
     envelope?.type === "result" &&
     envelope.subtype === "success" &&

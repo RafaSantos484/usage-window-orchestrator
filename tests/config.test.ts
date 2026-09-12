@@ -7,8 +7,9 @@ import {
   MAX_EXECUTION_BUDGET_SECONDS,
   worstCaseExecutionSeconds,
 } from "../src/config.ts";
+import { PROVIDER_IDS } from "../src/providers/catalog.ts";
 
-const PROVIDERS = ["claude"];
+const PROVIDERS = PROVIDER_IDS;
 
 describe("loadConfig", () => {
   it("applies safe defaults when nothing is set", () => {
@@ -48,13 +49,27 @@ describe("loadConfig", () => {
     expect(config.triggerSource).toBe("scheduled");
   });
 
+  it.each(["claude", "codex"])("accepts the implemented provider %s", (providerId) => {
+    expect(loadConfig({ AGENT_PROVIDER: providerId }, PROVIDERS).providerId).toBe(providerId);
+  });
+
+  it("normalizes a provider id the same way for every provider", () => {
+    expect(loadConfig({ AGENT_PROVIDER: "  CODEX " }, PROVIDERS).providerId).toBe("codex");
+  });
+
   it("rejects an unregistered provider and names the alternatives", () => {
-    expect(() => loadConfig({ AGENT_PROVIDER: "codex" }, PROVIDERS)).toThrow(ConfigError);
+    expect(() => loadConfig({ AGENT_PROVIDER: "gemini" }, PROVIDERS)).toThrow(ConfigError);
     try {
-      loadConfig({ AGENT_PROVIDER: "codex" }, PROVIDERS);
+      loadConfig({ AGENT_PROVIDER: "gemini" }, PROVIDERS);
     } catch (error) {
       expect((error as ConfigError).problems[0]).toContain("claude");
+      expect((error as ConfigError).problems[0]).toContain("codex");
     }
+  });
+
+  it("keeps claude as the default provider", () => {
+    expect(loadConfig({}, PROVIDERS).providerId).toBe("claude");
+    expect(DEFAULTS.providerId).toBe("claude");
   });
 
   it("reports every problem at once rather than failing one at a time", () => {
@@ -120,6 +135,26 @@ describe("loadConfig", () => {
   it("supports both provider flag forms", () => {
     expect(applyCliOverrides(["--provider", "claude"], {}).AGENT_PROVIDER).toBe("claude");
     expect(applyCliOverrides(["--provider=claude"], {}).AGENT_PROVIDER).toBe("claude");
+  });
+
+  it("accepts codex through either provider flag form", () => {
+    expect(loadConfig(applyCliOverrides(["--provider", "codex"], {}), PROVIDERS).providerId).toBe("codex");
+    expect(loadConfig(applyCliOverrides(["--provider=codex"], {}), PROVIDERS).providerId).toBe("codex");
+  });
+
+  it("applies the same shared settings whichever provider is selected", () => {
+    const shared = {
+      AGENT_PROMPT: "say ok",
+      AGENT_MODEL: "some-model",
+      AGENT_TIMEOUT_SECONDS: "90",
+      AGENT_MAX_ATTEMPTS: "3",
+      AGENT_LOG_LEVEL: "debug",
+      AGENT_TRIGGER_SOURCE: "scheduled",
+    };
+    const claude = loadConfig({ ...shared, AGENT_PROVIDER: "claude" }, PROVIDERS);
+    const codex = loadConfig({ ...shared, AGENT_PROVIDER: "codex" }, PROVIDERS);
+
+    expect({ ...codex, providerId: "claude" }).toEqual(claude);
   });
 
   it("rejects unknown flags instead of silently invoking defaults", () => {

@@ -12,7 +12,10 @@ describe("spawnProcessRunner", () => {
   it("captures stdout, stderr and the exit code", async () => {
     const result = await spawnProcessRunner({
       command: NODE,
-      args: ["-e", "process.stdout.write('out'); process.stderr.write('err'); process.exit(3)"],
+      args: [
+        "-e",
+        "require('node:fs').writeSync(1,'out'); require('node:fs').writeSync(2,'err'); process.exit(3)",
+      ],
       env: {},
       signal: never(),
     });
@@ -27,12 +30,18 @@ describe("spawnProcessRunner", () => {
   it("bounds captured output by UTF-8 bytes", async () => {
     const result = await spawnProcessRunner({
       command: NODE,
-      args: ["-e", "process.stdout.write('é'.repeat(100000))"],
+      args: [
+        "-e",
+        "const fs=require('node:fs'); fs.writeSync(1,'é'.repeat(100000)); fs.writeSync(2,'e'.repeat(100000))",
+      ],
       env: {},
       signal: never(),
     });
 
     expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(64 * 1024);
+    expect(Buffer.byteLength(result.stderr)).toBeLessThanOrEqual(64 * 1024);
+    expect(result.stdoutTruncated).toBe(true);
+    expect(result.stderrTruncated).toBe(true);
   });
 
   it("reports a missing binary instead of throwing", async () => {
@@ -52,7 +61,7 @@ describe("spawnProcessRunner", () => {
     try {
       const result = await spawnProcessRunner({
         command: NODE,
-        args: ["-e", "process.stdout.write(JSON.stringify(process.env))"],
+        args: ["-e", "require('node:fs').writeSync(1,JSON.stringify(process.env))"],
         env: { ONLY_THIS: "yes" },
         signal: never(),
       });
@@ -68,7 +77,7 @@ describe("spawnProcessRunner", () => {
   it("never runs through a shell, so arguments cannot become commands", async () => {
     const result = await spawnProcessRunner({
       command: NODE,
-      args: ["-e", "process.stdout.write(process.argv[1] ?? '')", "; echo pwned"],
+      args: ["-e", "require('node:fs').writeSync(1,process.argv[1] ?? '')", "; echo pwned"],
       env: {},
       signal: never(),
     });

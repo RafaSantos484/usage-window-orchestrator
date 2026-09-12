@@ -3,7 +3,9 @@ node_modules/
 
 # Never commit local agent credentials or session state.
 .claude/
+.codex/
 .credentials.json
+auth.json
 .env
 .env.*
 !.env.example

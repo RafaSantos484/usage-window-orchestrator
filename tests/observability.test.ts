@@ -116,6 +116,8 @@ describe("renderSummary", () => {
     const markdown = renderSummary(result);
     expect(markdown).toContain("## Usage window trigger — claude");
     expect(markdown).toContain("expected operational outcome");
+    expect(markdown).toContain("no completed response was observed");
+    expect(markdown).not.toContain("no allowance consumed");
     expect(markdown).toContain("`usage_limit_reached`");
   });
 
@@ -133,6 +135,34 @@ describe("renderSummary", () => {
     );
     expect(markdown).not.toContain(metadataSecret);
     expect(markdown).toContain("[redacted]");
+  });
+
+  it("renders both providers identically, naming only the selected one", () => {
+    const codex = renderSummary({ ...result, providerId: "codex" });
+    expect(codex).toContain("## Usage window trigger — codex");
+    expect(codex).not.toContain("claude");
+  });
+
+  it("carries no credential of any provider, whichever one ran", () => {
+    const codexToken = "at-averylongcodexaccesstokenvalue";
+    const claudeToken = "sk-ant-oat01-averylongsubscriptiontoken";
+    const markdown = renderSummary(
+      {
+        ...result,
+        providerId: "codex",
+        status: InvocationStatus.SUCCESS,
+        severity: "ok",
+        exitCode: 0,
+        diagnostic: { code: "ok", summary: `Codex accepted the invocation using ${codexToken}.` },
+        metadata: { numTurns: 1, responseChars: 2, cliLastEvent: "turn.completed" },
+      },
+      [codexToken, claudeToken],
+    );
+
+    expect(markdown).not.toContain(codexToken);
+    expect(markdown).not.toContain(claudeToken);
+    expect(markdown).toContain("[redacted]");
+    expect(markdown).toContain("`ok`");
   });
 
   it("redacts arbitrary nested values before JSON serialization", () => {
