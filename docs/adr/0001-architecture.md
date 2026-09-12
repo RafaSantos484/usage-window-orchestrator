@@ -3,6 +3,11 @@
 - **Status:** Accepted
 - **Date:** 2026-09-11
 - **Context:** First release of a new repository with one concrete provider.
+- **Extended by:** [ADR 0002](0002-codex-provider.md), which adds Codex. The
+  claims below about "one concrete provider", the single trigger workflow, and
+  the composition branch are superseded there; the boundaries, retry policy and
+  security consequences are not, and ADR 0002 records that adding a real second
+  provider required no change to `src/core/`.
 
 ## Decision
 
@@ -17,6 +22,7 @@ cron / manual dispatch
 GitHub Actions -> src/main.ts -> UsageWindowOrchestrator -> AgentProvider
                                                         |
                                                         +-> ClaudeCodeProvider
+                                                        +-> CodexCliProvider   (ADR 0002)
 ```
 
 `AgentProvider` is the only domain extension point. The orchestrator accepts a
@@ -25,9 +31,9 @@ a normalized result. Claude command construction and output classification stay
 inside `src/providers/claude/`.
 
 The composition root selects the provider directly. Adding a real provider
-requires a new adapter, a construction branch in `src/main.ts`, workflow
+requires a new adapter, an entry in the provider catalog, workflow
 runtime/secret wiring, and focused adapter tests. It does not require changes
-to orchestration or status policy.
+to orchestration or status policy — which the Codex integration confirmed.
 
 ## Boundaries
 
@@ -39,11 +45,13 @@ to orchestration or status policy.
 | `src/core/retry.ts` | Retry decision and exponential backoff. |
 | `src/core/logging.ts` | Logger contract and secret redaction. |
 | `src/providers/claude/` | Claude CLI arguments, token validation, process isolation, and native-output classification. |
+| `src/providers/codex/` | The same, for Codex (added by ADR 0002). |
+| `src/providers/catalog.ts` | Which providers exist and how the root constructs each (added by ADR 0002). |
 | `src/adapters/` | Child-process execution, JSON logging, GitHub summary, and fallback error output. |
 | `src/config.ts` / `src/main.ts` | Configuration validation and composition. |
 
 The core has no imports from `node:child_process`, the filesystem, GitHub, or
-Claude. Dependencies are plain constructor arguments and function parameters;
+any provider. Dependencies are plain constructor arguments and function parameters;
 there is no dependency-injection framework, service locator, or inheritance
 hierarchy.
 
@@ -51,11 +59,15 @@ hierarchy.
 
 ### Scheduling and overlap
 
-The workflow has one UTC cron entry every 2 hours and supports
-`workflow_dispatch`.
+Each provider has its own workflow with one UTC cron entry every 2 hours and
+`workflow_dispatch` support. (In this ADR's original form there was a single
+workflow; ADR 0002 splits it per provider so a cron event, which carries no
+dispatch inputs, cannot leave the scheduled provider ambiguous.)
 GitHub Actions `concurrency` uses `cancel-in-progress: false`, so a second run
 waits instead of running simultaneously or cancelling an invocation that may
-already have consumed allowance.
+already have consumed allowance. The default design scopes overlap protection
+per provider. Organizations that use a shared billing or concurrency policy
+can configure both workflows with the same group name.
 
 This release does not persist cross-run state and does not suppress sequential
 manual runs. A second manual dispatch after the first finishes is an explicit
@@ -65,9 +77,12 @@ new invocation. Keeping one cron entry avoids accidental duplicate schedules.
 
 Only `TRANSIENT_FAILURE` is retryable. Authentication failures, usage limits,
 timeouts, provider-unavailable failures, and unknown or ambiguous outcomes are
-not retried because repeating them may spend allowance twice. The Claude
-adapter uses `TRANSIENT_FAILURE` only for failures with clear pre-connection
-evidence; ambiguous network and upstream failures become `UNKNOWN_FAILURE`.
+not retried because repeating them may spend allowance twice. An adapter may
+use `TRANSIENT_FAILURE` only for failures with clear pre-connection evidence:
+Claude currently recognizes a narrow set of reviewed DNS/refusal signals, while
+Codex `0.154.0` exposes no trusted equivalent and does not currently produce
+`TRANSIENT_FAILURE`. Ambiguous network, stream and upstream failures become
+`UNKNOWN_FAILURE`.
 
 ### Usage-limit outcome
 
@@ -97,6 +112,10 @@ Rejected. The small provider interface and direct composition branch provide a
 credible extension path. Additional capabilities or registration machinery
 should be added only when a real second provider demonstrates a need.
 
+*Outcome:* the second provider (ADR 0002) demonstrated no such need. It needed
+one frozen two-entry lookup table in the composition root — no registration, no
+capability model, no container — and no change to the port itself.
+
 ### Use a serverless function or container scheduler
 
 Rejected. It would add deployment, secret-management, and infrastructure costs
@@ -104,10 +123,11 @@ for a short scheduled CLI invocation that GitHub Actions already hosts.
 
 ## Security consequences
 
-- Only `CLAUDE_CODE_OAUTH_TOKEN` is accepted; `ANTHROPIC_API_KEY` is never
-  forwarded, and API-key-shaped values are rejected.
-- The Claude child receives an allowlisted environment plus isolated temporary
-  home, temp, and working directories.
+- Only the subscription credential is accepted per provider;
+  `ANTHROPIC_API_KEY` (and, per ADR 0002, `CODEX_API_KEY` / `OPENAI_API_KEY`)
+  is never forwarded, and API-key-shaped values are rejected.
+- Each provider child receives an allowlisted environment plus isolated
+  temporary home, temp, and working directories.
 - The process runs without a shell, captures bounded output, and terminates its
   process group on abort.
 - Logs, diagnostics, summaries, and fallback errors are redacted.
@@ -119,5 +139,6 @@ for a short scheduled CLI invocation that GitHub Actions already hosts.
 
 Provider quota-window state is not observable. The application reports the
 invocation outcome, not whether a provider window started or reset. Cron timing
-is best effort. The pinned Claude CLI's output contract and the npm registry
-remain external dependencies that must be reviewed when upgraded.
+is best effort. Each pinned CLI's output contract and the npm registry remain
+external dependencies that must be reviewed when upgraded. Provider-specific
+limitations are recorded in the ADR that introduces the provider.
