@@ -1,8 +1,10 @@
 # usage-window-orchestrator
 
 Issues **one minimal, authenticated invocation** against an AI coding agent
-subscription on a schedule and reports the invocation outcome. It does not
-claim to observe or control the provider's usage-window state.
+subscription and reports the invocation outcome. It can be called manually or
+by a consumer-enabled scheduler; the canonical repository enables no recurring
+provider invocation. It does not claim to observe or control the provider's
+usage-window state.
 
 Claude and Codex are implemented. Adding a third agent does not require
 changes to `src/core/`: add an adapter, add its entry to the provider catalog,
@@ -10,9 +12,9 @@ and wire its runtime and secret into a workflow — see
 [docs/adding-a-provider.md](docs/adding-a-provider.md).
 
 ```
-                  cron ─┐
-                        ├─► GitHub Actions ─► src/main.ts ─► UsageWindowOrchestrator
-        manual dispatch ┘                                            │
+ consumer schedule (optional) ─┐
+                               ├─► GitHub Actions ─► src/main.ts ─► UsageWindowOrchestrator
+               manual dispatch ┘                                            │
                                                         AgentProvider (port)
                                                             │           │
                                               ClaudeCodeProvider   CodexCliProvider
@@ -35,7 +37,7 @@ and wire its runtime and secret into a workflow — see
 | Credential expiry | Long-lived | **90 days maximum** |
 | Refused credential | `ANTHROPIC_API_KEY` | `CODEX_API_KEY`, `OPENAI_API_KEY` |
 | Workflow | `usage-window-trigger.yml` | `usage-window-trigger-codex.yml` |
-| Schedule (UTC) | `17 */2 * * *` | `47 */2 * * *` |
+| Recurring schedule | Disabled by default; consumer-owned | Disabled by default; consumer-owned |
 | Model override | `vars.AGENT_MODEL` | `vars.AGENT_CODEX_MODEL` |
 | Turn bound | `--max-turns 1` | No turn flag exists; identified execution tools are disabled, the read-only sandbox is primary, and strict config rejects missing hardening keys |
 
@@ -51,9 +53,10 @@ discriminator; echoed or free-form limit prose is not trusted.
 
 ## What this is, and what it is not
 
-**It is:** a scheduler that spends a few tokens of *your own* subscription
-allowance at a time you choose, through each provider's officially supported
-headless mode, authenticated with your own subscription credential.
+**It is:** an invocation orchestrator that spends a few tokens of *your own*
+subscription allowance when you invoke it, through each provider's officially
+supported headless mode, authenticated with your own subscription credential.
+Optional recurrence is a consumer-owned deployment policy.
 
 **It is not, and will not become:**
 
@@ -69,7 +72,7 @@ headless mode, authenticated with your own subscription credential.
 
 The word **ping** is avoided on purpose: a ping is a *non-consuming* liveness
 probe, and this operation deliberately consumes allowance. We say **invocation**.
-Full vocabulary and rationale: [ADR 0001](docs/adr/0001-architecture.md#2-terminology).
+Full vocabulary and rationale: [ADR 0001](docs/adr/0001-architecture.md).
 
 ---
 
@@ -77,6 +80,11 @@ Full vocabulary and rationale: [ADR 0001](docs/adr/0001-architecture.md#2-termin
 
 Each provider is independent: set up either, or both. You do not need a
 credential for the provider you are not using.
+
+Fork or copy the project into a repository you control, enable GitHub Actions,
+and protect its default branch. Configure credentials and any optional
+recurrence only in that consumer repository; the public canonical repository
+does not operate provider invocations for you.
 
 Before storing a credential, create the provider-specific GitHub Environments
 `usage-window-claude` and `usage-window-codex` under *Settings → Environments*.
@@ -104,7 +112,7 @@ policy, so confirm it manually during setup.
    `usage-window-claude`: *Settings → Environments → usage-window-claude →
    Environment secrets → Add secret.*
 
-3. **Dry-run the workflow** — *Actions → Usage window trigger (Claude) → Run
+3. **Dry-run the workflow** — *Actions → Provider invocation (Claude) → Run
    workflow → `dry_run: true`*. This validates non-secret configuration,
    provider selection, and orchestration wiring without contacting Claude or
    consuming allowance. It does not require the token or install the Claude
@@ -113,9 +121,8 @@ policy, so confirm it manually during setup.
 
 4. **Run it for real** with `dry_run: false`, then check the job summary.
 
-5. **Adjust the schedule** in
-   [`.github/workflows/usage-window-trigger.yml`](.github/workflows/usage-window-trigger.yml)
-   (it is `17 */2 * * *` UTC by default — see [Scheduling](#scheduling)).
+5. **Optionally enable recurrence** in your own repository only after the
+   manual checks. Choose your own policy; see [Scheduling](#scheduling).
 
 ### Codex
 
@@ -135,7 +142,7 @@ substitute an API key.
    `usage-window-codex`: *Settings → Environments → usage-window-codex →
    Environment secrets → Add secret.*
 
-3. **Dry-run the workflow** — *Actions → Usage window trigger (Codex) → Run
+3. **Dry-run the workflow** — *Actions → Provider invocation (Codex) → Run
    workflow → `dry_run: true`*. Same guarantees and same blind spots as the
    Claude dry run: it does not validate or forward the token, install the
    Codex CLI, or contact OpenAI. The entry point may read configured secret
@@ -146,14 +153,13 @@ substitute an API key.
    `success` confirms the token is accepted; see
    [Troubleshooting](#failure-modes-and-troubleshooting) if it is not.
 
-5. **Adjust the schedule** in
-   [`.github/workflows/usage-window-trigger-codex.yml`](.github/workflows/usage-window-trigger-codex.yml)
-   (it is `47 */2 * * *` UTC by default).
-
-6. **Put the token's expiry in your calendar.** Codex access tokens expire
+5. **Put the token's expiry in your calendar.** Codex access tokens expire
    within 90 days. After expiry, runs are expected to fail with exit code 21
    when the CLI reports recognized authentication evidence; an unrecognized
    response fails closed with exit code 40. See [Rotating and revoking credentials](#rotating-and-revoking-credentials).
+
+6. **Optionally enable recurrence** in your own repository only after the
+   manual checks. Choose your own policy; see [Scheduling](#scheduling).
 
 ---
 
@@ -186,7 +192,7 @@ billing.
 rates — a different account and a different billing model. Making
 `AGENT_PROVIDER=codex` mean "bill my Platform account" while
 `AGENT_PROVIDER=claude` means "spend my subscription" would make the two
-providers incomparable, and would hand you an invoice the schedule never
+providers incomparable, and could hand you an invoice this automation never
 promised. We do not offer it as an opt-in mode either; the reasoning is in
 [ADR 0002](docs/adr/0002-codex-provider.md#1-authentication-and-billing).
 
@@ -265,71 +271,37 @@ Command-line equivalents for local use: `--dry-run`, `--provider <id>`,
 
 ## Scheduling
 
-**Each provider is scheduled by its own workflow file, and a cron event runs
-exactly the provider that file is named for.** There is no input, variable or
-fallback involved, so the scheduled provider can never be ambiguous:
+**Recurring provider invocation is disabled in the canonical repository.** The
+two maintained workflows support manual dispatch only. The credential owner
+chooses whether to add a schedule, which provider workflows to enable, and the
+cron expression for each; the project does not select a recurrence interval or
+provider offset.
 
-| Workflow | Provider | Cron (UTC) |
-| --- | --- | --- |
-| `usage-window-trigger.yml` | Claude | `17 */2 * * *` |
-| `usage-window-trigger-codex.yml` | Codex | `47 */2 * * *` |
+The complete opt-in procedure is in
+[Consumer-owned scheduling](docs/scheduling.md). It covers prerequisites,
+provider selection, the exact activation point, an explicitly illustrative
+cron example, UTC conversion, GitHub's best-effort delivery, concurrency and
+queueing, allowance impact, monitoring, disabling, Codex token rotation, and
+upstream upgrade handling.
 
-This is deliberate. A `schedule` event carries no `workflow_dispatch` inputs,
-so a single shared workflow would have to fall back to a hard-coded provider on
-every cron run — and its `concurrency.group` would silently collapse to that
-fallback too. One file per provider makes the file the unit of scheduling.
-Rationale and rejected alternatives: [ADR 0002](docs/adr/0002-codex-provider.md#2-workflow-and-scheduling).
+The safe order is: configure the provider-specific Environment and secret, run
+a dry run, run one real manual invocation to validate authentication, and only
+then decide whether to enable recurrence. Enable only providers you use. Every
+real scheduled invocation may consume subscription allowance, and success
+proves only that an invocation completed—not that provider quota state changed.
 
-The two crons are offset by 30 minutes to reduce simultaneous starts and hosted
-runner contention. GitHub may delay either run, so they can still overlap. They
-are **not** mutually exclusive: they use separate provider credentials and
-concurrency groups, and running both at once is allowed by this design. If your
-organization requires cross-provider exclusion, configure both workflows with
-the same concurrency group.
-
-If you only use one provider, disable the other workflow — *Actions → the
-workflow → ⋯ → Disable workflow*. Leaving it enabled without its secret just
-produces a failing run every two hours.
-
-```yaml
-on:
-  schedule:
-    - cron: "17 */2 * * *"  # minute 17 UTC, every 2 hours
-```
-
-**GitHub cron is always UTC.** There is no timezone setting, and it does not
-observe daylight saving time. Convert your local target time yourself:
-
-| You want | Your timezone | UTC cron |
-| --- | --- | --- |
-| 08:45 | UTC+0 (winter UK) | `45 8 * * *` |
-| 08:45 | UTC+1 (CEST / BST) | `45 7 * * *` |
-| 08:45 | UTC−3 (BRT) | `45 11 * * *` |
-| 08:45 | UTC−5 (EST) | `45 13 * * *` |
-
-If your region uses DST and you care about the local hour year-round, either
-accept the one-hour drift or change the cron expression seasonally.
-
-**Scheduled runs are best-effort.** GitHub queues them and routinely delivers
-several minutes late — occasionally much later under load, and scheduled
-workflows are disabled entirely after 60 days without repository activity.
-Nothing here assumes precise delivery: GitHub's concurrency guard only prevents
-overlap, so lateness does not change the application's decision.
-The default minute (`17`) avoids the top of the hour, which is the most
-congested slot.
-
-The `minute` is why the schedule is worth setting **earlier than you need**.
-Pick a time comfortably before your working session.
-
-Both providers are equally affected by cron drift. Neither schedule assumes the
-other ran.
+One file per provider preserves deterministic selection and secret isolation
+for both manual and consumer-enabled scheduled invocations. Scheduling remains
+outside `src/core/` and the provider adapters. See
+[ADR 0003](docs/adr/0003-consumer-owned-scheduling.md) for the ownership
+boundary, alternatives, and migration from the former active schedules.
 
 ---
 
 ## Running it manually
 
 **From GitHub:** you choose the provider by choosing the workflow —
-*Actions → **Usage window trigger (Claude)** or **Usage window trigger
+*Actions → **Provider invocation (Claude)** or **Provider invocation
 (Codex)** → Run workflow.* Both take the same inputs: `dry_run`, `model`,
 `log_level`. There is no `provider` input, because the workflow already is the
 provider. Configure each provider Environment to allow deployment only from the
@@ -347,10 +319,10 @@ or revoked credential. A real manual run is required to validate authentication
 end to end.
 
 Because `concurrency` queues rather than cancels, a manual run started while a
-scheduled one *for the same provider* is in flight waits for it to finish. It
-then runs normally: this release prevents overlap, but does not suppress
-sequential manual runs. A Claude run and a Codex run do not queue behind each
-other.
+consumer-scheduled one *for the same provider* is in flight waits for it to
+finish. It then runs normally: this release prevents overlap, but does not
+suppress sequential manual runs. A Claude run and a Codex run do not queue
+behind each other.
 
 **Locally:**
 
@@ -457,7 +429,7 @@ The exit codes are provider-neutral, and both providers map onto them:
 
 | Code | Status | Job result | Meaning |
 | --- | --- | --- | --- |
-| `0` | `success` | ✅ pass | The provider answered. Allowance was consumed. |
+| `0` | `success` | ✅ pass | The provider completed according to its adapter's reviewed success contract. Allowance was consumed. |
 | `0` | `skipped` | ✅ pass | Dry run; no provider call was made. |
 | `10` | `usage_limit_reached` | ⚠️ pass **with a warning** | The limit is already reached. |
 | `20` | *(config)* | ❌ fail | Invalid configuration, or a missing/refused secret. |
@@ -533,9 +505,9 @@ Claude's equivalents are in `src/providers/claude/classify.ts`; the shared ones
 the same thing for both.
 
 **Why a usage limit passes with a warning rather than failing:** it is an
-expected *operational* outcome, not a defect — it usually means the subscription
-is already in use, which is the state the schedule exists to produce. Marking it
-red would train you to ignore red runs. It still gets its own exit code and a
+expected *operational* outcome, not a defect — it means the provider reported
+that the subscription cannot currently complete the invocation. Marking it red
+would train you to ignore red runs. It still gets its own exit code and a
 visible annotation, so if you prefer it to fail, change one `case` arm in
 [`.github/actions/classify-outcome/action.yml`](.github/actions/classify-outcome/action.yml)
 — once, for both providers; no application code is involved.
@@ -563,19 +535,21 @@ protected is *one provider invocation*, which is exactly what a per-workflow
 group expresses. If your organization wants Claude and Codex runs to be
 mutually exclusive, give both workflows the same group name.
 
-This protects overlap only. A second manual dispatch after the first run has
-finished is an explicit new invocation and may consume allowance. Keep one cron
-entry per workflow unless you deliberately want multiple scheduled invocations.
+This protects overlap only. A second manual dispatch or queued scheduled run
+after the first has finished is a new invocation and may consume allowance.
+Concurrency does not deduplicate a consumer's recurring trigger policy.
 
 ### Validating overlap protection
 
-Workflow-level concurrency and cron delivery are platform behaviours, so they
-are deliberately not unit-tested — there is no application code to test.
+Workflow-level concurrency and consumer-enabled cron delivery are platform
+behaviours, so they are deliberately not unit-tested — there is no application
+code to test.
 [`tests/workflows.test.ts`](tests/workflows.test.ts) asserts the *declarations*
-(one cron per workflow, distinct groups, `cancel-in-progress: false`, only the
-provider's own secret, read-only permissions, pinned actions, complete exit-code
-coverage), which catches drift but does not parse YAML or prove that GitHub
-accepts and executes the workflow expressions.
+(no active upstream schedule, manual dispatch, a documented activation point,
+distinct groups, `cancel-in-progress: false`, only the provider's own secret,
+read-only permissions, pinned actions, and complete exit-code coverage), which
+catches drift but does not parse YAML or prove that GitHub accepts and executes
+a consumer's cron expression.
 
 To verify the behaviour manually:
 
@@ -601,8 +575,8 @@ This check uses real workflow runs and may consume allowance; use
 | `cli_timeout` | 30 | Raise `AGENT_TIMEOUT_SECONDS` (max 600, and it must fit the 8-minute budget). Not retried on purpose: the call may already have reached the model. |
 | `preconnect_network_failure` | 31 | Claude-only diagnostic for trusted DNS or connection setup evidence before acceptance. Codex 0.154.0 reports CLI-reported network failures as non-retryable `unknown_failure` because no structured pre-connection discriminator is available. |
 | `unclassified` | 40 | The CLI said something we do not recognise — often a new CLI version. Claude may include a redacted, bounded excerpt; Codex deliberately reports only event-shape metadata. Add a signal to the relevant `classify.ts` and bump the reviewed CLI version deliberately. |
-| Scheduled runs stopped | — | GitHub disables cron workflows after 60 days of repository inactivity. Re-enable in the Actions tab. |
-| Run was minutes late | — | Expected. GitHub cron is best-effort. |
+| Consumer-enabled scheduled runs stopped | — | Confirm that your own `schedule` block is still present. GitHub can disable scheduled workflows after 60 days of repository inactivity; re-enable the workflow in the Actions tab if needed. |
+| Consumer-enabled run was minutes late | — | Expected. GitHub cron is best-effort. |
 
 ### Claude only
 
@@ -625,7 +599,7 @@ This check uses real workflow runs and may consume allowance; use
 | `auth_failed` | 21 | Most often the token expired (90 days maximum). Also: revoked, the workspace member deprovisioned, or the workspace's `forced_login_method` set to `api`. There is also an open upstream report of `401 Unauthorized` for Business access tokens — [openai/codex#25246](https://github.com/openai/codex/issues/25246) — which the adapter cannot work around. For a production-equivalent local check, use the isolated command below before assuming the secret is wrong. |
 | `api_billing_path_detected` | 21 | Codex returned a Platform quota/billing error, so an API key is in play rather than the access token. Check that `CODEX_ACCESS_TOKEN` holds the right value and that no API key is set. |
 | `usage_limit_reached` | 10 | Expected. The ChatGPT plan or workspace credit limit is currently reached. |
-| `provider_rate_limited` | 40 | A 429 or generic rate limit. Deliberately **not** reported as a plan usage window, because the output does not say which limit was hit. Try the next scheduled slot. |
+| `provider_rate_limited` | 40 | A 429 or generic rate limit. Deliberately **not** reported as a plan usage window, because the output does not say which limit was hit. Decide conservatively whether to invoke again; the project does not retry it. |
 | `invalid_request` | 40 | Usually `vars.AGENT_CODEX_MODEL` naming a model your workspace cannot use. Clear it to fall back to the CLI default, and check *workspace model availability*. |
 | `sandbox_error` | 40 | Codex could not establish its read-only sandbox. Expected on unusual runners; `ubuntu-latest` is what this is tested against. |
 | `incomplete_turn` | 40 | Exit 0 but no `turn.completed`. Usually a CLI version whose `--json` stream has changed. Check the `cliLastEvent` and, when present, `malformedOutputLines` metadata, then review the pinned version. |
@@ -772,7 +746,7 @@ days, so put its expiry in a calendar.
 1. `claude setup-token` on your machine to mint a fresh token.
 2. Update the `CLAUDE_CODE_OAUTH_TOKEN` environment secret in
    `usage-window-claude`.
-3. Run *Usage window trigger (Claude)* manually with `dry_run: false` to confirm.
+3. Run *Provider invocation (Claude)* manually with `dry_run: false` to confirm.
 4. Revoke the old token.
 
 **Claude — revoke** (do this immediately if a token may have leaked): remove it
@@ -783,9 +757,9 @@ delete the environment secret from `usage-window-claude`.
 
 1. Create a replacement token at <https://chatgpt.com/admin/access-tokens>
    with the **Codex** scope only. Create the new one *before* revoking the old
-   one, so the schedule never has a gap.
+   one, so any consumer-enabled recurrence is not left with a dead credential.
 2. Update the `CODEX_ACCESS_TOKEN` environment secret in `usage-window-codex`.
-3. Run *Usage window trigger (Codex)* manually with `dry_run: false` to
+3. Run *Provider invocation (Codex)* manually with `dry_run: false` to
    confirm — a dry run cannot validate a credential.
 4. Revoke the old token from the same admin page.
 
@@ -826,14 +800,15 @@ are injected, so every test is deterministic and offline.
 | `tests/codex-classify.test.ts` | Codex JSONL parsing and classification: structured success, usage limits vs. rate limits, auth failures, non-retryable network prose, classified post-connection failures, malformed and noisy streams, redaction, and the rule that item payloads never reach a diagnostic. |
 | `tests/codex-provider.test.ts` | Codex command construction (read-only, repository-free, identified execution capabilities disabled, `--` terminated), credential refusal including API keys, the exact child environment, runtime isolation, and cleanup. |
 | `tests/catalog.test.ts` | Provider selection, per-provider credential and billing-warning wiring, and that a dry run constructs no real adapter. |
-| `tests/workflows.test.ts` | The GitHub Actions declarations: deterministic scheduled provider, per-provider secret isolation, pinned runtimes and actions, least-privilege permissions, no shell interpolation, and complete exit-code coverage. |
+| `tests/workflows.test.ts` | The GitHub Actions declarations: no active upstream provider schedule, manual/dry-run availability, deterministic provider selection, per-provider secret isolation, concurrency protection, pinned runtimes and actions, least-privilege permissions, no shell interpolation, and complete exit-code coverage. |
 | `tests/retry.test.ts` | Retry decisions and the status policy table. |
 | `tests/config.test.ts` | Validation, ranges, multi-problem reporting, CLI overrides, and that both providers share the same configuration semantics. |
 | `tests/observability.test.ts` | Redaction, log structure/filtering, secret-free summaries for both providers. |
 | `tests/process-runner.test.ts` | Child-process isolation: environment allowlist, no shell, bounded output with truncation reporting, and prompt termination on abort with no orphaned processes. |
 
-**What the tests cannot cover.** GitHub Actions *behaviour* — cron delivery,
-concurrency queueing, secret masking — has no application code to exercise;
+**What the tests cannot cover.** GitHub Actions *behaviour* — delivery of a
+consumer-added cron, concurrency queueing, secret masking — has no application
+code to exercise;
 `tests/workflows.test.ts` checks the declarations only. See
 [Validating overlap protection](#validating-overlap-protection) for the manual
 procedure, and note that a real end-to-end authentication check requires a real
@@ -860,8 +835,8 @@ src/
   main.ts            composition root: argv, env, exit codes
 
 .github/
-  workflows/usage-window-trigger.yml        Claude schedule + dispatch
-  workflows/usage-window-trigger-codex.yml  Codex schedule + dispatch
+  workflows/usage-window-trigger.yml        Claude manual dispatch
+  workflows/usage-window-trigger-codex.yml  Codex manual dispatch
   workflows/ci.yml                          typecheck + tests, no secrets
   actions/classify-outcome/                 exit code -> annotation, shared
 ```
@@ -870,6 +845,9 @@ Architecture rationale and rejected alternatives:
 [ADR 0001](docs/adr/0001-architecture.md).
 Codex authentication, workflow and isolation decisions:
 [ADR 0002](docs/adr/0002-codex-provider.md).
+Consumer-owned scheduling decision and migration:
+[ADR 0003](docs/adr/0003-consumer-owned-scheduling.md).
+Scheduling activation guide: [docs/scheduling.md](docs/scheduling.md).
 Version-pinned Codex contract and upgrade checklist:
 [docs/codex-0.154.0-contract.md](docs/codex-0.154.0-contract.md).
 Adding an agent: [docs/adding-a-provider.md](docs/adding-a-provider.md).
@@ -903,7 +881,7 @@ Three assumptions to avoid:
    attribute to a plan window. Only `usage_limit_reached` (exit 10) means that.
 3. **Do not expect a Codex success to imply anything about your Claude
    allowance, or vice versa.** They are independent provider integrations with
-   independent schedules and concurrency groups.
+   independent concurrency groups and any recurrence you choose for them.
 
 ---
 
@@ -924,9 +902,9 @@ Three assumptions to avoid:
   API key, because that changes the billing account — see
   [ADR 0002](docs/adr/0002-codex-provider.md#1-authentication-and-billing). If
   you are on Plus or Pro, the Codex provider is not usable for you today; use
-  the Claude workflow and leave the Codex one disabled.
-- **Codex access tokens expire within 90 days.** After expiry, the schedule is
-  expected to fail with exit code 21 when the CLI reports recognized
+  the Claude workflow and do not configure or schedule Codex.
+- **Codex access tokens expire within 90 days.** After expiry, a real invocation
+  is expected to fail with exit code 21 when the CLI reports recognized
   authentication evidence; an unrecognized response fails closed with exit
   code 40. There is no in-product reminder; use a calendar.
 - **Codex access tokens have a known open upstream failure report.**
@@ -934,7 +912,8 @@ Three assumptions to avoid:
   `401 Unauthorized` for Business access tokens against
   `chatgpt.com/backend-api/codex/responses`, apparently server-side. The
   adapter classifies it as `auth_failure` and cannot work around it. Validate a
-  new token outside CI before trusting the schedule.
+  new token with a real manual invocation before trusting consumer-enabled
+  recurrence.
 - **Provider behaviour can change, and these are external contracts.** Quota
   rules, CLI flags and error text belong to Anthropic and OpenAI. Structured
   output is preferred for both, but the fallback text classification in
@@ -955,7 +934,8 @@ Three assumptions to avoid:
   read-only sandbox, neutral directory and disposable runtime remain the
   primary controls. Revalidate this flag and every hardening key when
   upgrading the CLI.
-- **Cron is best-effort.** Expect minutes of drift; schedule accordingly.
+- **Consumer-enabled GitHub cron is best-effort.** It uses UTC and may be
+  delayed; choose and operate your schedule accordingly.
 - **A dry run proves less than it looks like it proves.** It validates
   non-secret configuration, provider selection and orchestration wiring. It
   does *not* validate or forward a credential, install a CLI, or contact a
@@ -967,4 +947,5 @@ Three assumptions to avoid:
   a subscription it is an equivalence estimate, not an invoice line. Codex
   reports token counts rather than a cost figure.
 - **One account, one provider per run.** Multi-account fan-out is out of scope.
-  The two providers run as two independent scheduled jobs, not as a fan-out.
+  The two providers remain independent jobs, whether manually dispatched or
+  scheduled by a consumer; they are not a fan-out.
