@@ -37,7 +37,7 @@ runs:
         printf 'provider=%s exit=%s\n' "$PROVIDER" "${CODE:-none}"
         case "${CODE:-1}" in
           0)
-            echo "::notice title=Usage window trigger::${PROVIDER}: completed or deliberately skipped"
+            echo "::notice title=Provider invocation::${PROVIDER}: completed or deliberately skipped"
             ;;
           10)
             echo "::warning title=Usage limit reached::${PROVIDER}: the provider reported that the subscription usage limit is currently reached; no completed response was observed. This is expected, not a defect."

@@ -2,7 +2,7 @@
   "name": "usage-window-orchestrator",
   "version": "1.0.0",
   "private": true,
-  "description": "Scheduled, provider-neutral orchestrator that issues a minimal authenticated invocation against an AI coding agent subscription.",
+  "description": "Provider-neutral orchestrator for minimal authenticated invocations against AI coding agent subscriptions.",
   "type": "module",
   "engines": {
     "node": ">=22.18"

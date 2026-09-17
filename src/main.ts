@@ -27,9 +27,9 @@ import { logUnhandledError } from "./adapters/unhandled-error.ts";
 const USAGE = `usage-window-orchestrator
 
 Issues one minimal, authenticated invocation against a configured AI coding
-agent subscription at a convenient time. It reports the invocation outcome,
-not provider quota-window state. Configuration is read from the environment;
-see README.md.
+agent subscription when requested. Recurrence, if any, belongs to the caller.
+It reports the invocation outcome, not provider quota-window state.
+Configuration is read from the environment; see README.md.
 
   --dry-run            Validate configuration and orchestration without calling
                        the provider (consumes no allowance).

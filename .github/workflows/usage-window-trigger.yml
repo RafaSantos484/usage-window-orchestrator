@@ -1,25 +1,16 @@
-# Scheduled minimal invocation against the CLAUDE subscription.
+# Manual minimal invocation against the Claude subscription.
 #
-# One workflow per provider. A cron event carries no `workflow_dispatch`
-# inputs, so a shared workflow could not choose a provider deterministically on
-# a schedule; giving each provider its own file makes the scheduled provider a
-# property of the file itself. It also keeps each provider's secret out of the
-# other's job entirely. Codex lives in usage-window-trigger-codex.yml.
-# Rationale: docs/adr/0002-codex-provider.md.
-#
-# Scheduling is best-effort: GitHub queues cron workflows and commonly runs
-# them several minutes late, occasionally much later under load. Nothing in
-# this workflow or the application assumes on-the-second delivery - see
-# README.md ("Scheduling").
-name: Usage window trigger (Claude)
+# The canonical repository deliberately has no schedule. Consumers may add a
+# schedule of their choosing to this provider-specific workflow in their own
+# repository; see docs/scheduling.md. Keeping one workflow per provider makes
+# selection deterministic and keeps each provider's secret out of the other's
+# job entirely. Codex lives in usage-window-trigger-codex.yml.
+# Rationale: docs/adr/0002-codex-provider.md and 0003-consumer-owned-scheduling.md.
+name: Provider invocation (Claude)
 
 on:
-  schedule:
-    # Every 2 hours at minute 17. Minute 17 rather than 00 because the top of
-    # the hour is GitHub's busiest slot and is delayed most. Cron is ALWAYS UTC
-    # - GitHub has no timezone setting. See README.md ("Scheduling") to convert.
-    - cron: "17 */2 * * *"
-
+  # Consumer scheduling activation point: add `schedule` in your own repository.
+  # See docs/scheduling.md; no recurring invocation is enabled upstream.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -76,7 +67,7 @@ jobs:
         # output contract.
         run: npm install -g --no-audit --no-fund "@anthropic-ai/claude-code@2.1.268"
 
-      - name: Trigger usage window
+      - name: Invoke Claude
         id: trigger
         env:
           # The only credential in this job. Never echoed, never forwarded to

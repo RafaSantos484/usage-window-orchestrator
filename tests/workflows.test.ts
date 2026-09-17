@@ -1,16 +1,17 @@
 /**
  * Guards the invariants of the GitHub Actions wiring that a reviewer would
  * otherwise have to re-check by hand on every change: secret isolation between
- * providers, deterministic scheduled provider selection, least-privilege
- * permissions, pinned runtimes and actions, and complete exit-code coverage.
+ * providers, consumer-owned scheduling, deterministic provider selection,
+ * least-privilege permissions, pinned runtimes and actions, and complete
+ * exit-code coverage.
  *
  * These are text assertions rather than a YAML model, so the repository keeps
  * its zero-dependency posture. They cannot prove that GitHub *executes* the
- * workflow correctly - concurrency queueing and cron delivery are platform
- * behaviours with no application code to test. See README.md
+ * workflow correctly - concurrency queueing and consumer-enabled cron
+ * delivery are platform behaviours with no application code to test. See README.md
  * ("Validating overlap protection") for the manual procedure.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ExitCode } from "../src/core/invocation.ts";
 
@@ -62,9 +63,7 @@ const WORKFLOWS: readonly ProviderWorkflow[] = [
 ];
 
 describe.each(WORKFLOWS)("$label trigger workflow", (workflow) => {
-  it("selects its provider literally, so a scheduled run is deterministic", () => {
-    // A cron event carries no workflow_dispatch inputs; deriving the provider
-    // from one would make the scheduled provider undefined.
+  it("selects its provider literally, so manual and consumer-scheduled runs are deterministic", () => {
     expect(workflow.yaml).toContain(`AGENT_PROVIDER: ${workflow.providerId}`);
     expect(workflow.yaml).not.toMatch(/AGENT_PROVIDER:.*github\.event\.inputs/);
   });
@@ -80,8 +79,19 @@ describe.each(WORKFLOWS)("$label trigger workflow", (workflow) => {
     expect(workflow.yaml).toContain(`environment: ${workflow.environmentName}`);
   });
 
-  it("declares exactly one cron entry", () => {
-    expect(workflow.yaml.match(/^\s*- cron:/gm)).toHaveLength(1);
+  it("is manual-only upstream and identifies the consumer scheduling activation point", () => {
+    const wiring = withoutComments(workflow.yaml);
+    expect(wiring).toMatch(/^\s*workflow_dispatch:/m);
+    expect(wiring).not.toMatch(/^\s*schedule:/m);
+    expect(wiring).not.toMatch(/^\s*- cron:/m);
+    expect(workflow.yaml).toContain("docs/scheduling.md");
+  });
+
+  it("retains dry-run dispatch and reports a consumer-added schedule accurately", () => {
+    expect(workflow.yaml).toMatch(/workflow_dispatch:\n\s+inputs:\n\s+dry_run:/);
+    expect(workflow.yaml).toContain(
+      "AGENT_TRIGGER_SOURCE: ${{ github.event_name == 'schedule' && 'scheduled' || 'manual' }}",
+    );
   });
 
   it("wires only its own provider's credential", () => {
@@ -95,8 +105,15 @@ describe.each(WORKFLOWS)("$label trigger workflow", (workflow) => {
   });
 
   it("scopes the credential to the invocation step, not the job", () => {
-    const jobEnv = workflow.yaml.slice(workflow.yaml.indexOf("    env:"), workflow.yaml.indexOf("    steps:"));
-    expect(jobEnv).not.toContain(workflow.ownSecret);
+    const beforeSteps = workflow.yaml.slice(workflow.yaml.indexOf("jobs:"), workflow.yaml.indexOf("    steps:"));
+    expect(beforeSteps).not.toContain(workflow.ownSecret);
+  });
+
+  it("installs the provider runtime before introducing the credential", () => {
+    const install = workflow.yaml.indexOf(`"${workflow.cliPackage}@${workflow.cliVersion}"`);
+    const secretWiring = workflow.yaml.indexOf(`${workflow.ownSecret}: \${{ secrets.${workflow.ownSecret} }}`);
+    expect(install).toBeGreaterThan(-1);
+    expect(secretWiring).toBeGreaterThan(install);
   });
 
   it("installs the provider runtime at a reviewed exact version", () => {
@@ -151,15 +168,56 @@ describe.each(WORKFLOWS)("$label trigger workflow", (workflow) => {
 });
 
 describe("trigger workflows together", () => {
-  it("schedule the two providers at different minutes", () => {
-    const crons = WORKFLOWS.map((workflow) => /- cron: "([^"]+)"/.exec(workflow.yaml)?.[1]);
-    expect(crons.every(Boolean)).toBe(true);
-    expect(new Set(crons).size).toBe(crons.length);
+  it("ship no active provider schedule", () => {
+    for (const workflow of WORKFLOWS) {
+      const wiring = withoutComments(workflow.yaml);
+      expect(wiring).not.toMatch(/^\s*schedule:/m);
+    }
+  });
+
+  it("keeps every executable provider workflow free of active recurrence", () => {
+    const workflowDirectory = new URL("../.github/workflows/", import.meta.url);
+    for (const name of readdirSync(workflowDirectory).filter((entry) => /\.ya?ml$/.test(entry))) {
+      const yaml = read(`.github/workflows/${name}`);
+      const wiring = withoutComments(yaml);
+      // Be conservative: a provider literal is enough to classify a workflow,
+      // even when it delegates execution to a wrapper. Entry-point patterns
+      // cover workflows that select the provider through a CLI argument.
+      const invokesOrchestrator = isProviderWorkflow(wiring);
+      if (!invokesOrchestrator) continue;
+      expect(wiring, name).not.toMatch(/^\s*schedule:/m);
+    }
+  });
+
+  it("recognizes provider workflows across supported invocation spellings", () => {
+    expect(isProviderWorkflow("env:\n  AGENT_PROVIDER: claude\nrun: ./scripts/invoke-provider.sh")).toBe(true);
+    expect(isProviderWorkflow("run: node ./src/main.ts --dry-run")).toBe(true);
+    expect(isProviderWorkflow("run: npm --silent run --silent trigger")).toBe(true);
+    expect(isProviderWorkflow("run: npm test\n# AGENT_PROVIDER: codex")).toBe(false);
   });
 
   it("use separate concurrency groups, so one provider cannot block the other", () => {
     const groups = WORKFLOWS.map((workflow) => /group: (\S+)/.exec(workflow.yaml)?.[1]);
     expect(new Set(groups).size).toBe(WORKFLOWS.length);
+  });
+});
+
+describe("consumer scheduling guidance", () => {
+  const guide = read("docs/scheduling.md");
+
+  it("makes recurrence optional and consumer-owned without restoring the former policy", () => {
+    expect(guide).toMatch(/recurring execution is optional and disabled/i);
+    expect(guide).toContain("Illustrative example only");
+  });
+
+  it("documents UTC, best-effort delivery, queueing, disabling, allowance, and rotation", () => {
+    expect(guide).toMatch(/cron is\s+UTC/i);
+    expect(guide).toMatch(/best[- ]effort/i);
+    expect(guide).toMatch(/queue/i);
+    expect(guide).toMatch(/cancel/i);
+    expect(guide).toMatch(/disable recurrence|remove .*schedule/i);
+    expect(guide).toMatch(/allowance|subscription consumption/i);
+    expect(guide).toMatch(/rotation|expire/i);
   });
 });
 
@@ -227,4 +285,12 @@ function withoutComments(yaml: string): string {
     .split("\n")
     .filter((line) => !/^\s*#/.test(line))
     .join("\n");
+}
+
+/** Conservative textual inventory of workflows capable of provider execution. */
+function isProviderWorkflow(wiring: string): boolean {
+  const providerLiteral = /^\s*AGENT_PROVIDER:\s*["']?(?:claude|codex)["']?\s*(?:#.*)?$/m;
+  const nodeEntryPoint = /\bnode(?:\s+--?[^\s]+)*\s+(?:\.\/)?src\/main\.ts\b/;
+  const npmScript = /\bnpm(?:\s+--?[^\s]+)*\s+run(?:\s+--?[^\s]+)*\s+trigger\b/;
+  return providerLiteral.test(wiring) || nodeEntryPoint.test(wiring) || npmScript.test(wiring);
 }
