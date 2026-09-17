@@ -24,8 +24,8 @@ export type RetryDecision =
  *
  * Deliberately conservative: a retry costs real subscription allowance, so we
  * only retry failures that are both clearly transient and clearly
- * non-consuming. Everything else fails the run and waits for the next
- * scheduled slot.
+ * non-consuming. Everything else fails the run. Whether and when a later
+ * invocation occurs is the caller's policy, not the core's.
  */
 export function decideRetry(
   status: InvocationStatus,

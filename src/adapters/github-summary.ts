@@ -50,7 +50,7 @@ export function renderSummary(
     : "";
 
   return redact([
-    `## Usage window trigger — ${result.providerId}`,
+    `## Provider invocation — ${result.providerId}`,
     "",
     HEADLINE[result.status],
     "",

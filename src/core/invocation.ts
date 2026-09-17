@@ -17,7 +17,7 @@ export type TriggerSource = "scheduled" | "manual";
  * native failure modes onto it; the orchestrator reasons about nothing else.
  */
 export const InvocationStatus = {
-  /** The provider accepted the request and produced a response. Allowance was consumed. */
+  /** The provider accepted the request and met its adapter's success contract. Allowance was consumed. */
   SUCCESS: "success",
   /** The provider refused because the subscription's usage limit is currently reached. */
   USAGE_LIMIT_REACHED: "usage_limit_reached",
