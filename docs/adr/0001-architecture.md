@@ -8,12 +8,17 @@
   the composition branch are superseded there; the boundaries, retry policy and
   security consequences are not, and ADR 0002 records that adding a real second
   provider required no change to `src/core/`.
+- **Scheduling policy superseded by:**
+  [ADR 0003](0003-consumer-owned-scheduling.md). The architecture and security
+  boundaries remain accepted; the canonical workflows are now manual-only and
+  consumers own whether and when recurrence is enabled.
 
 ## Decision
 
-Use GitHub Actions for scheduling, manual dispatch, secrets, job timeout, and
-overlap control. Keep the application small and provider-neutral at one proven
-boundary:
+Use GitHub Actions for invocation delivery, manual dispatch, secrets, job
+timeout, and overlap control. Keep the application small and provider-neutral
+at one proven boundary. As originally accepted, delivery included an active
+cron; ADR 0003 later removed that upstream policy:
 
 ```text
 cron / manual dispatch
@@ -57,9 +62,10 @@ hierarchy.
 
 ## Operational decisions
 
-### Scheduling and overlap
+### Scheduling and overlap (historical policy; scheduling superseded by ADR 0003)
 
-Each provider has its own workflow with one UTC cron entry every 2 hours and
+The original decision gave each provider its own workflow with one UTC cron
+entry every 2 hours and
 `workflow_dispatch` support. (In this ADR's original form there was a single
 workflow; ADR 0002 splits it per provider so a cron event, which carries no
 dispatch inputs, cannot leave the scheduled provider ambiguous.)
@@ -69,9 +75,11 @@ already have consumed allowance. The default design scopes overlap protection
 per provider. Organizations that use a shared billing or concurrency policy
 can configure both workflows with the same group name.
 
-This release does not persist cross-run state and does not suppress sequential
-manual runs. A second manual dispatch after the first finishes is an explicit
-new invocation. Keeping one cron entry avoids accidental duplicate schedules.
+The overlap decision remains current. The repository does not persist cross-run
+state and does not suppress sequential manual runs. A second manual dispatch
+after the first finishes is an explicit new invocation. ADR 0003 removes the
+canonical cron entries and makes any consumer-added recurrence the consumer's
+policy.
 
 ### Retry policy
 
@@ -103,8 +111,7 @@ the workflow.
 Rejected for this release. Cross-run duplicate suppression needs mutable,
 authoritative state. GitHub Actions cache provides immutable snapshots and does
 not make that guarantee. Adding a state service would be disproportionate to a
-single-user scheduled job, so the product guarantee is limited to overlap
-control.
+small invocation job, so the product guarantee is limited to overlap control.
 
 ### Add a second provider framework now
 
@@ -119,7 +126,9 @@ capability model, no container — and no change to the port itself.
 ### Use a serverless function or container scheduler
 
 Rejected. It would add deployment, secret-management, and infrastructure costs
-for a short scheduled CLI invocation that GitHub Actions already hosts.
+for a short CLI invocation that GitHub Actions already hosts. ADR 0003 leaves
+external scheduling possible but does not claim maintained support without a
+tested integration artifact.
 
 ## Security consequences
 
@@ -138,7 +147,8 @@ for a short scheduled CLI invocation that GitHub Actions already hosts.
 ## Limitations
 
 Provider quota-window state is not observable. The application reports the
-invocation outcome, not whether a provider window started or reset. Cron timing
-is best effort. Each pinned CLI's output contract and the npm registry remain
+invocation outcome, not whether a provider window started or reset.
+Consumer-enabled GitHub cron delivery is best effort. Each pinned CLI's output
+contract and the npm registry remain
 external dependencies that must be reviewed when upgraded. Provider-specific
 limitations are recorded in the ADR that introduces the provider.

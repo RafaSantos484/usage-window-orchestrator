@@ -6,11 +6,14 @@
   [ADR 0001](0001-architecture.md) said should drive any change to the
   provider boundary.
 - **Supersedes:** nothing. Extends ADR 0001's operational decisions.
+- **Scheduling policy superseded by:**
+  [ADR 0003](0003-consumer-owned-scheduling.md). The per-provider workflow and
+  isolation decision remains accepted; its active cron values do not.
 
 ## Decision
 
 Add a Codex adapter behind the existing `AgentProvider` port, authenticated
-with a **Codex access token** (`CODEX_ACCESS_TOKEN`), scheduled by its **own
+with a **Codex access token** (`CODEX_ACCESS_TOKEN`), invoked through its **own
 workflow file**, and executed through `codex exec --json` in a **read-only,
 repository-free** child process with the currently identified execution
 capabilities disabled.
@@ -35,7 +38,8 @@ facts are carried as provider-specific *diagnostic codes*, which is exactly the
 escape hatch ADR 0001 reserved for this.
 
 Documentation ownership is intentionally split. The README is the operator
-entry point for setup, scheduling, security, and troubleshooting. This ADR
+entry point for setup, security, and troubleshooting; the scheduling guide
+records consumer activation after ADR 0003. This ADR
 records the architectural decision and rejected alternatives. The pinned
 contract document is authoritative for version-specific Codex flags, event
 shapes, and upgrade checks. Provider-extension rules remain in
@@ -132,13 +136,15 @@ as an enterprise deployment feature rather than a single-repository one. It is
 the natural upgrade if this repository ever runs inside an organisation that
 already has federation.
 
-## 2. Workflow and scheduling
+## 2. Workflow and scheduling (active cron policy superseded by ADR 0003)
 
-**Chosen: one workflow file per provider, plus a local composite action for the
-shared exit-code mapping.**
+**Originally chosen:** one workflow file per provider with an active schedule,
+plus a local composite action for the shared exit-code mapping.
 
-- `.github/workflows/usage-window-trigger.yml` — Claude, `17 */2 * * *` UTC.
-- `.github/workflows/usage-window-trigger-codex.yml` — Codex, `47 */2 * * *` UTC.
+- `.github/workflows/usage-window-trigger.yml` — Claude, historically with an
+  active two-hour UTC policy.
+- `.github/workflows/usage-window-trigger-codex.yml` — Codex, historically with
+  the same recurrence and a maintainer-selected offset.
 - `.github/actions/classify-outcome/action.yml` — exit code → annotation and
   job conclusion, used by both.
 
@@ -167,6 +173,12 @@ The composite action answers the one real objection to separate files —
 duplicated outcome YAML. It holds no secret, runs no provider code, and gives
 the exit-code contract in `src/core/invocation.ts` exactly one mapping in CI.
 `tests/workflows.test.ts` asserts that every `ExitCode` value has an arm.
+
+ADR 0003 retains the separate workflow and composite-action decisions but
+removes both active cron entries from the canonical repository. Provider
+determinism now applies to manual dispatch and to any schedule a consumer adds
+to its own copy. The concrete values above are historical facts, not current
+defaults or recommendations.
 
 ### Rejected: one shared workflow with conditional provider steps
 
@@ -382,8 +394,8 @@ is the documentation-only clarification noted above:
 ## Limitations
 
 - Codex access tokens require a ChatGPT Business or Enterprise workspace.
-- They expire after at most 90 days, so the Codex schedule needs a calendar
-  reminder that the Claude schedule does not.
+- They expire after at most 90 days, so Codex operators need a calendar
+  reminder whether invocations are manual or consumer-scheduled.
 - Codex access tokens have a known open upstream report of `401 Unauthorized`
   against `chatgpt.com/backend-api/codex/responses`
   ([openai/codex#25246](https://github.com/openai/codex/issues/25246)). The
