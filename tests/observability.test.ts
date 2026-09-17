@@ -114,7 +114,7 @@ describe("renderSummary", () => {
 
   it("renders an operator-readable markdown summary", () => {
     const markdown = renderSummary(result);
-    expect(markdown).toContain("## Usage window trigger — claude");
+    expect(markdown).toContain("## Provider invocation — claude");
     expect(markdown).toContain("expected operational outcome");
     expect(markdown).toContain("no completed response was observed");
     expect(markdown).not.toContain("no allowance consumed");
@@ -139,7 +139,7 @@ describe("renderSummary", () => {
 
   it("renders both providers identically, naming only the selected one", () => {
     const codex = renderSummary({ ...result, providerId: "codex" });
-    expect(codex).toContain("## Usage window trigger — codex");
+    expect(codex).toContain("## Provider invocation — codex");
     expect(codex).not.toContain("claude");
   });
 
