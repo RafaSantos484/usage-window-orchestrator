@@ -32,12 +32,16 @@ remain inside the adapter rather than becoming catalog fields.
 4. Raise `ProviderConfigurationError` (from
    `src/providers/provider-configuration-error.ts`) for a missing or
    unacceptable credential. The composition root maps it to exit code 20.
-5. Add its own workflow file with its own cron, concurrency group, reviewed CLI
-   version pin, and provider-specific GitHub Environment. Store the credential
-   as an environment secret and configure that environment to permit deployment
-   only from the protected default branch. Keep the in-file guard and explicit
-   default-branch checkout as defense in depth — see
-   [scheduling rationale](adr/0002-codex-provider.md#2-workflow-and-scheduling).
+5. Add its own **manual-only** workflow file with its own concurrency group,
+   reviewed CLI version pin, and provider-specific GitHub Environment. The
+   canonical repository must not ship an active `schedule` trigger. Store the
+   credential as an environment secret and configure that environment to
+   permit deployment only from the protected default branch. Keep the in-file
+   guard and explicit
+   default-branch checkout as defense in depth. Document the consumer scheduling
+   activation point in [the scheduling guide](scheduling.md), while keeping the
+   provider literal in the workflow so selection cannot depend on an input — see
+   [ADR 0003](adr/0003-consumer-owned-scheduling.md).
    Reuse `.github/actions/classify-outcome`. Add the workflow to the table in
    `tests/workflows.test.ts`.
 6. Add tests for command construction, credential refusal, the exact child
@@ -65,9 +69,11 @@ the spawn error first: the provider entry point was not executable, so
 of the existing process boundary and should remain consistent across adapters.
 
 **Do not infer success from a zero exit code alone** if the CLI can report
-failure with one. Require positive structured evidence that the model ran and
-produced a response; for a single-turn provider require exactly one clean
-terminal turn with exactly one non-empty response and no unknown events.
+failure with one. Require positive structured evidence that the provider
+accepted the invocation and met its reviewed success contract. If that contract
+requires a response, require response evidence; for a single-turn provider
+whose contract exposes one, require exactly one clean terminal turn with exactly
+one non-empty response and no unknown events.
 
 **Do not derive a passing or retryable result from arbitrary prose.** For Codex,
 usage-limit claims require an exact structured error discriminant. A provider
