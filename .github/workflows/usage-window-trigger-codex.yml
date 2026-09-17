@@ -1,11 +1,11 @@
-# Scheduled minimal invocation against the CODEX (ChatGPT workspace) plan.
+# Manual minimal invocation against the Codex (ChatGPT workspace) plan.
 #
-# One workflow per provider. A cron event carries no `workflow_dispatch`
-# inputs, so a shared workflow could not choose a provider deterministically on
-# a schedule; this file *is* the Codex schedule. It also keeps
+# The canonical repository deliberately has no schedule. Consumers may add a
+# schedule of their choosing to this provider-specific workflow in their own
+# repository; see docs/scheduling.md. This file also keeps
 # CLAUDE_CODE_OAUTH_TOKEN out of this job entirely, so the Codex CLI runs in a
 # process that has never seen the Claude credential.
-# Rationale: docs/adr/0002-codex-provider.md.
+# Rationale: docs/adr/0002-codex-provider.md and 0003-consumer-owned-scheduling.md.
 #
 # AUTHENTICATION: CODEX_ACCESS_TOKEN is a Codex access token minted in the
 # ChatGPT admin console. It bills against the ChatGPT workspace plan allowance,
@@ -13,22 +13,13 @@
 # workspace, and it expires after at most 90 days - see
 # README.md ("Authentication and billing") for setup and rotation.
 #
-# Scheduling is best-effort: GitHub queues cron workflows and commonly runs
-# them several minutes late, occasionally much later under load. Nothing in
-# this workflow or the application assumes on-the-second delivery - see
-# README.md ("Scheduling").
-name: Usage window trigger (Codex)
+# Consumer-enabled scheduling is best-effort and uses UTC; see
+# docs/scheduling.md before enabling it.
+name: Provider invocation (Codex)
 
 on:
-  schedule:
-    # Every 2 hours at minute 47. Offset 30 minutes from the Claude schedule so
-    # the two providers normally start at different times, reducing hosted
-    # runner contention, and off the top of the hour because that is GitHub's
-    # busiest and most-delayed slot. Delivery can still be delayed or overlap.
-    # Cron is ALWAYS UTC - GitHub has no timezone setting. See README.md
-    # ("Scheduling") to convert.
-    - cron: "47 */2 * * *"
-
+  # Consumer scheduling activation point: add `schedule` in your own repository.
+  # See docs/scheduling.md; no recurring invocation is enabled upstream.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -87,7 +78,7 @@ jobs:
         # event contract and flag set.
         run: npm install -g --no-audit --no-fund "@openai/codex@0.154.0"
 
-      - name: Trigger usage window
+      - name: Invoke Codex
         id: trigger
         env:
           # The only credential in this job. Never echoed, never forwarded to
